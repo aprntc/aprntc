@@ -23,12 +23,30 @@ export type PlaybookDiff = {
   provenance?: Record<string, string[]>;
 };
 
+export type AutoDecision = {
+  action: "auto_promote" | "human_review" | "reject";
+  reasons: string[];
+  summary: string;
+  policy_enabled: boolean;
+};
+
+export type AutoPolicy = {
+  enabled: boolean;
+  win_rate_min: number;
+  ci_low_min: number;
+  loss_rate_max: number;
+  max_diff_items: number;
+  allow_watch_out: boolean;
+  min_trust: number;
+};
+
 export type Review = {
   available: boolean;
   candidate_playbook_hash?: string | null;
   gate: GateReport;
   passed: boolean;
   diff: PlaybookDiff;
+  auto?: AutoDecision | null;
 };
 
 export type Generation = {
@@ -107,6 +125,9 @@ export const api = {
     post<AgentRunResult>("/api/agents/run", { agent_id, task }),
   feedback: (episode_id: string, vote: "up" | "down") =>
     post<{ ok: boolean; fused_reward: number | null }>("/api/feedback", { episode_id, vote }),
+  autoPolicy: () => get<AutoPolicy>("/api/policy/auto-promote"),
+  setAutoPolicy: (patch: Partial<AutoPolicy>) =>
+    post<AutoPolicy>("/api/policy/auto-promote", patch),
   authConfig: () => get<{ enabled: boolean; provider: string | null }>("/api/auth/config"),
   me: () => get<AuthMe>("/api/auth/me"),
   logout: () => post<{ ok: boolean }>("/api/auth/logout"),

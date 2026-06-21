@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../lib/api";
+import { api, AutoDecision } from "../lib/api";
 import { useAsync, pct } from "../lib/hooks";
 import { Badge, Button, Card, Empty, Metric, PageHeader, Spinner } from "../components/ui";
 import {
@@ -106,6 +106,12 @@ export default function Review() {
         {!hasDiff(data.diff) && <div className="p-4 text-sm text-faint">No changes proposed.</div>}
       </Card>
 
+      {/* A4: auto-promotion verdict + opt-in toggle. Always hidden when the gate
+          already rejects (`auto` is null/REJECT — the gate banner above covers that). */}
+      {data.auto && data.auto.action !== "reject" && (
+        <AutoPromotion auto={data.auto} onPolicyChange={refetch} />
+      )}
+
       {msg && (
         <div className="mb-4 rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm text-fg">{msg}</div>
       )}
@@ -170,3 +176,68 @@ function DiffList({
 
 const hasDiff = (d: { add_directives?: string[]; add_exemplars?: string[]; add_watch_out?: string[] }) =>
   !!(d.add_directives?.length || d.add_exemplars?.length || d.add_watch_out?.length);
+
+
+function AutoPromotion({ auto, onPolicyChange }: { auto: AutoDecision; onPolicyChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const isAuto = auto.action === "auto_promote";
+  const togglePolicy = async () => {
+    setBusy(true);
+    try {
+      await api.setAutoPolicy({ enabled: !auto.policy_enabled });
+      onPolicyChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card
+      className={`mb-6 border-l-4 p-4 ${
+        isAuto ? "border-l-success bg-success/5" : "border-l-warning bg-warning/5"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 text-sm font-medium text-fg">
+            {isAuto ? (
+              <>
+                <IconRocket className="h-4 w-4 text-success" />
+                <span>Eligible for auto-promotion</span>
+                {!auto.policy_enabled && (
+                  <Badge tone="warning">policy off — won't fire</Badge>
+                )}
+              </>
+            ) : (
+              <>
+                <IconShield className="h-4 w-4 text-warning" />
+                <span>Needs human review</span>
+              </>
+            )}
+          </div>
+          {auto.reasons.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-muted">
+              {auto.reasons.map((r) => (
+                <li key={r}>· {r}</li>
+              ))}
+            </ul>
+          )}
+          {isAuto && auto.policy_enabled && (
+            <div className="mt-2 text-xs text-success">
+              All guardrails clear — auto-promotion would fire on this candidate.
+            </div>
+          )}
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            disabled={busy}
+            checked={auto.policy_enabled}
+            onChange={togglePolicy}
+            className="h-4 w-4"
+          />
+          <span>Enable auto-promotion</span>
+        </label>
+      </div>
+    </Card>
+  );
+}

@@ -31,6 +31,7 @@ def _client(tmp_path, store=None, memory_search=None, bundle=None, agent_run=Non
     state = AppState(
         lineage_path=str(tmp_path / "lineage.json"),
         bundle_path=str(tmp_path / "bundle.json"),
+        auto_policy_path=str(tmp_path / "auto_policy.json"),
         store=store,
         memory_search=memory_search,
         agent_run=agent_run,
@@ -131,6 +132,70 @@ def test_list_and_get_trajectory(tmp_path, store):
 def test_get_missing_trajectory_404(tmp_path, store):
     r = _client(tmp_path, store=store).get("/api/trajectories/ep_nope")
     assert r.status_code == 404
+
+
+def test_auto_promotion_policy_default_off(tmp_path):
+    """A4: GET /api/policy/auto-promote returns the default-off conservative policy."""
+    c = _client(tmp_path)
+    r = c.get("/api/policy/auto-promote").json()
+    assert r["enabled"] is False
+    # bar margins are above the gate bar (auto requires stricter)
+    assert r["win_rate_min"] > 0.5 and r["loss_rate_max"] < 0.10
+
+
+def test_auto_promotion_policy_partial_update_persists(tmp_path):
+    """A4: POST /api/policy/auto-promote — partial updates persist; unset fields keep priors."""
+    c = _client(tmp_path)
+    r = c.post("/api/policy/auto-promote", json={"enabled": True}).json()
+    assert r["enabled"] is True
+    # round-trip — flip survives a fresh GET (file-backed)
+    assert c.get("/api/policy/auto-promote").json()["enabled"] is True
+
+
+def test_review_auto_decision_human_review(tmp_path):
+    """A4: a passing gate but disabled policy + low trust → HUMAN_REVIEW with reasons."""
+    bundle = {
+        "candidate_playbook_hash": "h",
+        "gate": {
+            "n": 30, "wins": 24, "losses": 1, "ties": 5,
+            "win_rate": 0.80, "ci_low": 0.62, "ci_high": 0.91,
+            "loss_rate": 0.03,
+            "regression_failures": 0, "safety_failures": 0,
+            "win_rate_ok": True, "ci_ok": True, "loss_ok": True,
+            "regression_ok": True, "safety_ok": True,
+        },
+        "diff": {"add_directives": ["always cite"], "add_exemplars": [], "add_watch_out": []},
+    }
+    c = _client(tmp_path, bundle=bundle)
+    r = c.get("/api/review").json()
+    auto = r["auto"]
+    # policy default-off + no trust signal → HUMAN_REVIEW (never silent reject)
+    assert auto["action"] == "human_review"
+    assert auto["policy_enabled"] is False
+    assert any("disabled" in reason for reason in auto["reasons"])
+
+
+def test_review_auto_decision_reject_when_gate_fails(tmp_path):
+    """A4: failed gate → REJECT (auto can't bypass hard gates)."""
+    bundle = {
+        "candidate_playbook_hash": "h",
+        "gate": {
+            "n": 30, "win_rate": 0.40, "ci_low": 0.20, "loss_rate": 0.30,
+            "regression_failures": 0, "safety_failures": 0,
+            "win_rate_ok": False, "ci_ok": False, "loss_ok": False,
+            "regression_ok": True, "safety_ok": True,
+        },
+        "diff": {"add_directives": ["a"], "add_exemplars": [], "add_watch_out": []},
+    }
+    c = _client(tmp_path, bundle=bundle)
+    r = c.get("/api/review").json()
+    assert r["auto"]["action"] == "reject"
+
+
+def test_review_no_bundle_no_auto(tmp_path):
+    """A4: empty bundle (no candidate) → auto is null (nothing to decide)."""
+    c = _client(tmp_path)
+    assert c.get("/api/review").json()["auto"] is None
 
 
 def test_trajectories_collector_filter_and_counts(tmp_path, store):

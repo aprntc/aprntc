@@ -22,7 +22,10 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from aprntc.distill.playbook import PlaybookDiff
+from aprntc.promote.auto import AutoPromotionPolicy
 from aprntc.promote.lineage import LineageRegistry
+from aprntc.promote.stats import GateReport
 from aprntc.trajectory.store import TrajectoryStore
 
 
@@ -32,6 +35,8 @@ class AppState:
 
     lineage_path: str = "lineage.json"
     bundle_path: str = "review_bundle.json"
+    # A4: opt-in auto-promotion policy (default-off). JSON-persisted per tenant.
+    auto_policy_path: str = "auto_policy.json"
     store: TrajectoryStore | None = None
     # optional: a memory retriever (callable(query, k) -> list[dict]) for the lessons screen
     memory_search: Any | None = None
@@ -272,6 +277,57 @@ def _make_agent_run(store: TrajectoryStore, client: Any, model: str, kb_fn: Any)
     return run
 
 
+def _load_auto_policy(path: str) -> AutoPromotionPolicy:
+    """Load the auto-promotion policy from JSON, or the conservative default."""
+    p = Path(path)
+    if not p.exists():
+        return AutoPromotionPolicy()
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return AutoPromotionPolicy()
+    return AutoPromotionPolicy(**{k: v for k, v in d.items()
+                                  if k in AutoPromotionPolicy.__dataclass_fields__})
+
+
+def _save_auto_policy(path: str, policy: AutoPromotionPolicy) -> None:
+    """Persist the auto-promotion policy as JSON."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    d = {f: getattr(policy, f) for f in AutoPromotionPolicy.__dataclass_fields__}
+    p.write_text(json.dumps(d, indent=2), encoding="utf-8")
+
+
+def _gate_from_dict(d: dict[str, Any]) -> GateReport:
+    """Rebuild a GateReport from the persisted review-bundle dict."""
+    return GateReport(
+        n=int(d.get("n", 0)),
+        wins=float(d.get("wins", 0)),
+        losses=float(d.get("losses", 0)),
+        ties=float(d.get("ties", 0)),
+        win_rate=float(d.get("win_rate", 0.0)),
+        ci_low=float(d.get("ci_low", 0.0)),
+        ci_high=float(d.get("ci_high", 0.0)),
+        loss_rate=float(d.get("loss_rate", 0.0)),
+        regression_failures=int(d.get("regression_failures", 0)),
+        safety_failures=int(d.get("safety_failures", 0)),
+        win_rate_ok=bool(d.get("win_rate_ok", False)),
+        ci_ok=bool(d.get("ci_ok", False)),
+        loss_ok=bool(d.get("loss_ok", False)),
+        regression_ok=bool(d.get("regression_ok", False)),
+        safety_ok=bool(d.get("safety_ok", False)),
+    )
+
+
+def _diff_from_dict(d: dict[str, Any]) -> PlaybookDiff:
+    """Rebuild a minimal PlaybookDiff (decide() only reads the add_* lists)."""
+    return PlaybookDiff(
+        add_directives=list(d.get("add_directives", [])),
+        add_exemplars=list(d.get("add_exemplars", [])),
+        add_watch_out=list(d.get("add_watch_out", [])),
+    )
+
+
 def _build_auth(*, load_dotenv: bool = True):
     """Wire human dashboard auth (Google + session) from env, or (None, None, None).
 
@@ -362,6 +418,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
         ctx = _resolve_ctx(request)
         return state.tenant_agent_run(ctx) if ctx is not None else state.agent_run
 
+    def _resolve_auto_policy_path(request: "Request") -> str:
+        ctx = _resolve_ctx(request)
+        return ctx.auto_policy_path if ctx is not None else state.auto_policy_path
+
     # -- health ----------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -382,20 +442,57 @@ def create_app(state: AppState | None = None) -> FastAPI:
     # -- review / gate ---------------------------------------------------
     @app.get("/api/review")
     def get_review(request: Request) -> dict[str, Any]:
-        """The current candidate review bundle: gate report + attributable diff."""
+        """The current candidate review bundle: gate report + attributable diff.
+
+        A4: also runs the AutoPromotionPolicy against the bundle and includes the
+        decision (AUTO_PROMOTE / HUMAN_REVIEW / REJECT) + blocked-guardrail reasons.
+        The policy is default-OFF — operators opt in via /api/policy/auto-promote.
+        """
         bundle = _resolve_bundle(request)
         gate = bundle.get("gate", {})
         passed = gate.get("passed")
         if passed is None:
             passed = all(gate.get(k, False) for k in
                          ("win_rate_ok", "ci_ok", "loss_ok", "regression_ok", "safety_ok"))
+
+        auto: dict[str, Any] | None = None
+        policy = _load_auto_policy(_resolve_auto_policy_path(request))
+        if bundle:
+            decision = policy.decide(_gate_from_dict(gate), _diff_from_dict(bundle.get("diff", {})))
+            auto = {
+                "action": decision.action.value,
+                "reasons": list(decision.reasons),
+                "summary": decision.summary(),
+                "policy_enabled": policy.enabled,
+            }
+
         return {
             "available": bool(bundle),
             "candidate_playbook_hash": bundle.get("candidate_playbook_hash"),
             "gate": gate,
             "passed": passed,
             "diff": bundle.get("diff", {}),
+            "auto": auto,
         }
+
+    # -- A4: auto-promotion policy (default-off, opt-in) ----------------------
+    @app.get("/api/policy/auto-promote")
+    def get_auto_policy(request: Request) -> dict[str, Any]:
+        """Read the current auto-promotion policy (default-off conservative)."""
+        policy = _load_auto_policy(_resolve_auto_policy_path(request))
+        return {f: getattr(policy, f) for f in AutoPromotionPolicy.__dataclass_fields__}
+
+    @app.post("/api/policy/auto-promote")
+    def set_auto_policy(body: dict[str, Any], request: Request) -> dict[str, Any]:
+        """Update the auto-promotion policy. Body is a partial — unset fields keep priors."""
+        path = _resolve_auto_policy_path(request)
+        current = _load_auto_policy(path)
+        fields = AutoPromotionPolicy.__dataclass_fields__
+        for k, v in body.items():
+            if k in fields:
+                setattr(current, k, v)
+        _save_auto_policy(path, current)
+        return {f: getattr(current, f) for f in fields}
 
     # -- lineage ---------------------------------------------------------
     @app.get("/api/lineage")
