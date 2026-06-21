@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, AutoDecision } from "../lib/api";
+import { api, AutoDecision, AuditRecord } from "../lib/api";
 import { useAsync, pct } from "../lib/hooks";
 import { Badge, Button, Card, Empty, Metric, PageHeader, Spinner } from "../components/ui";
 import {
@@ -109,7 +109,10 @@ export default function Review() {
       {/* A4: auto-promotion verdict + opt-in toggle. Always hidden when the gate
           already rejects (`auto` is null/REJECT — the gate banner above covers that). */}
       {data.auto && data.auto.action !== "reject" && (
-        <AutoPromotion auto={data.auto} onPolicyChange={refetch} />
+        <>
+          <AutoPromotion auto={data.auto} onPolicyChange={refetch} />
+          <AuditLog />
+        </>
       )}
 
       {msg && (
@@ -176,6 +179,49 @@ function DiffList({
 
 const hasDiff = (d: { add_directives?: string[]; add_exemplars?: string[]; add_watch_out?: string[] }) =>
   !!(d.add_directives?.length || d.add_exemplars?.length || d.add_watch_out?.length);
+
+
+function AuditLog() {
+  const { data } = useAsync(() => api.autoAudit(10), []);
+  const records = data?.records ?? [];
+  if (records.length === 0) return null;
+  return (
+    <details className="mb-6">
+      <summary className="cursor-pointer text-xs text-muted hover:text-fg">
+        Audit log ({data!.count} {data!.count === 1 ? "record" : "records"})
+      </summary>
+      <div className="mt-2 space-y-1.5">
+        {records.map((r, i) => <AuditRow key={`${r.ts}-${i}`} r={r} />)}
+      </div>
+    </details>
+  );
+}
+
+function AuditRow({ r }: { r: AuditRecord }) {
+  const tone: Record<AuditRecord["action"], "success" | "warning" | "danger"> = {
+    auto_promote: "success",
+    human_review: "warning",
+    reject: "danger",
+  };
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs">
+      <Badge tone={tone[r.action]}>{r.action}</Badge>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[10px] text-faint">
+          <span>{new Date(r.ts).toLocaleString()}</span>
+          {r.candidate_playbook_hash && (
+            <span className="font-mono">{r.candidate_playbook_hash.slice(0, 14)}…</span>
+          )}
+          {r.policy_enabled && <span className="text-success">policy on</span>}
+          {r.trust_value != null && <span>trust {pct(r.trust_value)} (n={r.trust_n})</span>}
+        </div>
+        {r.reasons.length > 0 && (
+          <div className="mt-0.5 text-muted">{r.reasons.join(" · ")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 
 function TrustLine({ trust }: { trust: NonNullable<AutoDecision["trust"]> }) {

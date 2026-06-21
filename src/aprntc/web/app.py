@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aprntc.distill.playbook import PlaybookDiff
 from aprntc.fleet.registry import AgentRef, Fleet
+from aprntc.promote.audit import append_audit, read_audit
 from aprntc.promote.auto import AutoPromotionPolicy
 from aprntc.promote.lineage import LineageRegistry
 from aprntc.promote.stats import GateReport
@@ -38,6 +39,8 @@ class AppState:
     bundle_path: str = "review_bundle.json"
     # A4: opt-in auto-promotion policy (default-off). JSON-persisted per tenant.
     auto_policy_path: str = "auto_policy.json"
+    # Append-only audit log for every auto-decision (compliance + debugging).
+    auto_audit_path: str = "auto_promote_audit.jsonl"
     # A6: fleet — many parent agents under one apprentice (each its own lineage).
     fleet_root: str = "fleet"
     # A2: online shadow runner + canary controller. Wired at deploy-time against
@@ -429,6 +432,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
         ctx = _resolve_ctx(request)
         return ctx.auto_policy_path if ctx is not None else state.auto_policy_path
 
+    def _resolve_auto_audit_path(request: "Request") -> str:
+        ctx = _resolve_ctx(request)
+        return ctx.auto_audit_path if ctx is not None else state.auto_audit_path
+
     def _resolve_fleet(request: "Request") -> Fleet:
         ctx = _resolve_ctx(request)
         return Fleet(ctx.fleet_root if ctx is not None else state.fleet_root)
@@ -503,6 +510,19 @@ def create_app(state: AppState | None = None) -> FastAPI:
                     "min_n": trust_report.min_n if trust_report else None,
                 } if trust_report else None,
             }
+            # Append to the audit log. Idempotent — identical consecutive
+            # decisions on the same candidate aren't duplicated (dashboard
+            # polling would otherwise spam the log).
+            append_audit(
+                _resolve_auto_audit_path(request),
+                candidate_playbook_hash=bundle.get("candidate_playbook_hash"),
+                action=decision.action.value,
+                policy_enabled=policy.enabled,
+                reasons=decision.reasons,
+                trust_value=trust_report.value if trust_report else None,
+                trust_n=trust_report.n if trust_report else 0,
+                gate_summary=gate.get("summary"),
+            )
 
         return {
             "available": bool(bundle),
@@ -531,6 +551,17 @@ def create_app(state: AppState | None = None) -> FastAPI:
                 setattr(current, k, v)
         _save_auto_policy(path, current)
         return {f: getattr(current, f) for f in fields}
+
+    @app.get("/api/policy/auto-promote/audit")
+    def get_auto_audit(request: Request, limit: int = 50) -> dict[str, Any]:
+        """Append-only audit log of auto-decisions (newest first).
+
+        One record per actual decision change (idempotent across polls). Records:
+        timestamp, candidate hash, action, blocked guardrails, trust signal,
+        gate summary. Limit defaults to the most-recent 50.
+        """
+        records = read_audit(_resolve_auto_audit_path(request), limit=limit)
+        return {"records": [r.to_dict() for r in records], "count": len(records)}
 
     # -- lineage ---------------------------------------------------------
     @app.get("/api/lineage")

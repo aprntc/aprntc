@@ -35,6 +35,17 @@ export type AutoDecision = {
   } | null;
 };
 
+export type AuditRecord = {
+  ts: string;
+  candidate_playbook_hash: string | null;
+  action: "auto_promote" | "human_review" | "reject";
+  policy_enabled: boolean;
+  reasons: string[];
+  trust_value: number | null;
+  trust_n: number;
+  gate_summary: string | null;
+};
+
 export type AutoPolicy = {
   enabled: boolean;
   win_rate_min: number;
@@ -133,6 +144,10 @@ export const api = {
   autoPolicy: () => get<AutoPolicy>("/api/policy/auto-promote"),
   setAutoPolicy: (patch: Partial<AutoPolicy>) =>
     post<AutoPolicy>("/api/policy/auto-promote", patch),
+  autoAudit: (limit = 20) =>
+    get<{ records: AuditRecord[]; count: number }>(
+      `/api/policy/auto-promote/audit?limit=${limit}`,
+    ),
   fleet: (domain?: string) => {
     const qs = domain ? `?domain=${encodeURIComponent(domain)}` : "";
     return get<{ agents: FleetAgent[] }>(`/api/fleet${qs}`);

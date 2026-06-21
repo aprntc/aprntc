@@ -28,6 +28,7 @@ class TenantContext:
     bundle_path: str
     fleet_root: str
     auto_policy_path: str
+    auto_audit_path: str
 
     @property
     def tenant_id(self) -> str:
@@ -79,5 +80,6 @@ class TenantResolver:
                 bundle_path=str(base / "review_bundle.json"),
                 fleet_root=str(base / "fleet"),
                 auto_policy_path=str(base / "auto_policy.json"),
+                auto_audit_path=str(base / "auto_promote_audit.jsonl"),
             )
         return self._ctx_cache[tid]
