@@ -103,6 +103,60 @@ def test_handle_event_sink_error_swallowed():
     assert ep is not None  # sink threw but we still returned the episode
 
 
+def test_proxy_logger_integrates_with_real_litellm():
+    """Integration test against the live LiteLLM library — proves the wire format
+    holds against the real CustomLogger interface, not just our hand-written dicts.
+
+    Skipped when litellm isn't installed (the unit-test offline path is the
+    primary guarantee; this exists to catch contract drift on LiteLLM upgrades).
+    """
+    pytest.importorskip("litellm")
+    from datetime import datetime
+    from aprntc.tap.egress_proxy import make_proxy_logger
+    from litellm.integrations.custom_logger import CustomLogger  # type: ignore
+
+    captured: list = []
+    logger = make_proxy_logger(captured.append)
+    # The returned object MUST be a real LiteLLM CustomLogger subclass — otherwise
+    # `litellm.callbacks = [logger]` would silently no-op in production.
+    assert isinstance(logger, CustomLogger)
+
+    # LiteLLM passes datetimes (start/end), a kwargs dict, and a response object
+    # with .model_dump(). Construct shapes that mirror real LiteLLM events.
+    class _LiteLLMResponse:
+        def model_dump(self):
+            return _RESP
+
+    logger.log_success_event(
+        kwargs=_REQ,
+        response_obj=_LiteLLMResponse(),
+        start_time=datetime(2026, 1, 1, 0, 0, 0),
+        end_time=datetime(2026, 1, 1, 0, 0, 2),
+    )
+    assert len(captured) == 1
+    ep = captured[0]
+    assert ep.collector is Collector.EGRESS_PROXY
+    assert ep.final_output == "30 days."
+    # The 2-second wall-clock should turn into a real latency_ms.
+    assert ep.latency_ms is not None and ep.latency_ms >= 1000
+
+
+def test_proxy_logger_failure_event_marks_partial():
+    """A logged failure event from LiteLLM lands as a partial Episode."""
+    pytest.importorskip("litellm")
+    from aprntc.tap.egress_proxy import make_proxy_logger
+
+    captured: list = []
+    logger = make_proxy_logger(captured.append)
+    logger.log_failure_event(
+        kwargs={**_REQ, "exception": RuntimeError("upstream 500")},
+        response_obj=None,
+        start_time=None,
+        end_time=None,
+    )
+    assert len(captured) == 1 and captured[0].partial is True
+
+
 # ─── OTel ingester ───────────────────────────────────────────────────────────
 
 def test_otel_span_genai_attrs():

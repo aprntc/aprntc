@@ -226,6 +226,21 @@ Three collectors behind the AgentTap core, all normalize → Episode, all unit-t
 - shared `tap/normalize.py`; `tap/README.md`; +19 tests (188 total).
 - Live-verify deferred (each needs its external service); mapping logic proven. → A2 next.
 
+### A1 — Egress proxy LIVE-VERIFIED end-to-end (2026-06-21)
+The reference external-agent integration loop is proven on live infra:
+- `scripts/demo_external_agent.py` — a small "external customer" program (no aprntc imports beyond
+  `make_proxy_logger`) fetches its playbook via HTTP (`GET /api/playbooks/{id}/active`, B0), makes a
+  real ModelArk call through `litellm.completion(...)` with the `AprntcProxyLogger` as a callback,
+  and verifies the trajectory landed.
+- **Verified:** 3.2 s call → episode `ep_b4857cab5b034efe9298ea3ba29e6b4e` captured with
+  `collector=egress_proxy`, model_id, latency 3185 ms, tokens 76/178, surfaced in
+  `GET /api/trajectories?collector=egress_proxy` (the A1 filter chip now shows
+  `egress_proxy: 1` alongside `sdk_wrapper`). Five-line wiring example documented in `tap/README.md`.
+- Two new LiteLLM-integration tests confirm the `make_proxy_logger()` return value is a real
+  `CustomLogger` subclass + `log_success_event`/`log_failure_event` dispatch correctly against the
+  live LiteLLM library (catches contract drift on upgrades). 318 tests total.
+- OTel + MCP + A2A live-verify still gated on their external services (separate work).
+
 ## A2 — Online shadow / A-B canary ✅ DONE (2026-06-14)
 `src/aprntc/online/`: `ShadowRunner` (shadow child vs parent on live requests, fail-open + sampled +
 position-debiased, live win-rate/CI, `ready_to_promote()`); `CanaryController` (staged rollout
