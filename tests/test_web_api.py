@@ -192,6 +192,44 @@ def test_review_auto_decision_reject_when_gate_fails(tmp_path):
     assert r["auto"]["action"] == "reject"
 
 
+def test_fleet_empty_by_default(tmp_path):
+    """A6: /api/fleet returns an empty list when no agent has been registered."""
+    state = AppState(fleet_root=str(tmp_path / "fleet"))
+    c = TestClient(create_app(state))
+    assert c.get("/api/fleet").json() == {"agents": []}
+
+
+def test_fleet_register_and_list(tmp_path):
+    """A6: register surfaces in list — domain + tags echo back; generation null pre-promote."""
+    state = AppState(fleet_root=str(tmp_path / "fleet"))
+    c = TestClient(create_app(state))
+    r = c.post("/api/fleet/register",
+               json={"agent_id": "support-bot", "domain": "support",
+                     "name": "Support bot", "tags": ["prod", "kb"]}).json()
+    assert r["agent_id"] == "support-bot" and r["domain"] == "support"
+    lst = c.get("/api/fleet").json()["agents"]
+    assert len(lst) == 1
+    a = lst[0]
+    assert a["agent_id"] == "support-bot" and a["domain"] == "support"
+    assert a["tags"] == ["prod", "kb"]
+    assert a["current_generation"] is None  # no parent registered yet
+
+
+def test_fleet_register_requires_agent_id(tmp_path):
+    state = AppState(fleet_root=str(tmp_path / "fleet"))
+    c = TestClient(create_app(state))
+    assert c.post("/api/fleet/register", json={}).status_code == 400
+
+
+def test_fleet_filter_by_domain(tmp_path):
+    state = AppState(fleet_root=str(tmp_path / "fleet"))
+    c = TestClient(create_app(state))
+    c.post("/api/fleet/register", json={"agent_id": "a1", "domain": "support"})
+    c.post("/api/fleet/register", json={"agent_id": "a2", "domain": "rag"})
+    only_rag = c.get("/api/fleet?domain=rag").json()["agents"]
+    assert [a["agent_id"] for a in only_rag] == ["a2"]
+
+
 def test_review_no_bundle_no_auto(tmp_path):
     """A4: empty bundle (no candidate) → auto is null (nothing to decide)."""
     c = _client(tmp_path)

@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from aprntc.distill.playbook import PlaybookDiff
+from aprntc.fleet.registry import AgentRef, Fleet
 from aprntc.promote.auto import AutoPromotionPolicy
 from aprntc.promote.lineage import LineageRegistry
 from aprntc.promote.stats import GateReport
@@ -37,6 +38,8 @@ class AppState:
     bundle_path: str = "review_bundle.json"
     # A4: opt-in auto-promotion policy (default-off). JSON-persisted per tenant.
     auto_policy_path: str = "auto_policy.json"
+    # A6: fleet — many parent agents under one apprentice (each its own lineage).
+    fleet_root: str = "fleet"
     store: TrajectoryStore | None = None
     # optional: a memory retriever (callable(query, k) -> list[dict]) for the lessons screen
     memory_search: Any | None = None
@@ -422,6 +425,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
         ctx = _resolve_ctx(request)
         return ctx.auto_policy_path if ctx is not None else state.auto_policy_path
 
+    def _resolve_fleet(request: "Request") -> Fleet:
+        ctx = _resolve_ctx(request)
+        return Fleet(ctx.fleet_root if ctx is not None else state.fleet_root)
+
     # -- health ----------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -657,6 +664,41 @@ def create_app(state: AppState | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no episode {episode_id}")
         fused = store.fused_reward(episode_id)
         return {"ok": True, "fused_reward": fused[0] if fused else None}
+
+    # -- A6: fleet — many parents under one apprentice, each its own lineage ----
+    @app.get("/api/fleet")
+    def list_fleet(request: Request, domain: str | None = None) -> dict[str, Any]:
+        """List all agents in the fleet; optionally filter by domain.
+
+        Each agent ships with its current lineage generation (so the UI can show
+        "G3" beside it without a follow-up call).
+        """
+        fleet = _resolve_fleet(request)
+        agents = (fleet.by_domain(domain) if domain is not None else fleet.agents())
+        out: list[dict[str, Any]] = []
+        for a in agents:
+            cur = fleet.lineage(a.agent_id).current
+            out.append({
+                **a.to_dict(),
+                "current_generation": cur.generation if cur else None,
+                "playbook_hash": cur.playbook_hash if cur else None,
+            })
+        return {"agents": out}
+
+    @app.post("/api/fleet/register")
+    def register_agent(body: dict[str, Any], request: Request) -> dict[str, Any]:
+        """Add an agent to the fleet (does not promote — just records existence)."""
+        agent_id = (body.get("agent_id") or "").strip()
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="agent_id is required")
+        fleet = _resolve_fleet(request)
+        ref = fleet.register(AgentRef(
+            agent_id=agent_id,
+            domain=(body.get("domain") or "generic").strip() or "generic",
+            name=(body.get("name") or "").strip(),
+            tags=list(body.get("tags") or []),
+        ))
+        return ref.to_dict()
 
     # -- B0/B2: playbook serving — tenant-isolated when a resolver is configured --
     def _registry(request: "Request"):

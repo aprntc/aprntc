@@ -275,6 +275,23 @@ def test_lessons_endpoint_requires_auth_in_tenant_mode(tmp_path):
     assert r.status_code == 200 and "available" in r.json()
 
 
+def test_fleet_is_isolated_per_tenant(tmp_path):
+    """A6: fleet/{tenant_a} cannot see agents registered to fleet/{tenant_b}."""
+    c, ka, kb = _multitenant_client(tmp_path)
+    # Tenant A registers a support agent.
+    r = c.post("/api/fleet/register",
+               json={"agent_id": "shared-id", "domain": "support"},
+               headers={"X-API-Key": ka})
+    assert r.status_code == 200
+
+    la = c.get("/api/fleet", headers={"X-API-Key": ka}).json()["agents"]
+    assert len(la) == 1 and la[0]["agent_id"] == "shared-id"
+
+    # Tenant B's fleet stays empty even though the agent_id collides.
+    lb = c.get("/api/fleet", headers={"X-API-Key": kb}).json()["agents"]
+    assert lb == []
+
+
 def test_session_cookie_resolves_tenant(tmp_path):
     """Dashboard humans authenticate via session cookie (not API key)."""
     from aprntc.auth import SessionSigner

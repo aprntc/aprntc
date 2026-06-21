@@ -10,6 +10,7 @@ import {
   IconMoon,
   IconSun,
   IconTrace,
+  IconUsers,
 } from "./components/icons";
 import { Spinner } from "./components/ui";
 import ReviewScreen from "./screens/Review";
@@ -17,6 +18,7 @@ import LineageScreen from "./screens/Lineage";
 import TrajectoriesScreen from "./screens/Trajectories";
 import LessonsScreen from "./screens/Lessons";
 import TryAgentScreen from "./screens/TryAgent";
+import FleetScreen from "./screens/Fleet";
 import Login from "./screens/Login";
 
 const NAV = [
@@ -25,6 +27,7 @@ const NAV = [
   { to: "/lineage", label: "Lineage", icon: IconBranch },
   { to: "/trajectories", label: "Trajectories", icon: IconTrace },
   { to: "/lessons", label: "Lessons", icon: IconBook },
+  { to: "/fleet", label: "Fleet", icon: IconUsers },
 ];
 
 function Sidebar({ me }: { me: AuthMe | null }) {
@@ -118,6 +121,7 @@ export default function App() {
             <Route path="/lineage" element={<LineageScreen />} />
             <Route path="/trajectories" element={<TrajectoriesScreen />} />
             <Route path="/lessons" element={<LessonsScreen />} />
+            <Route path="/fleet" element={<FleetScreen />} />
           </Routes>
         </div>
       </main>

@@ -29,4 +29,5 @@ export const IconSparkle = (p: P) => (<S {...p}><path d="M12 3l1.8 5.2L19 10l-5.
 export const IconBolt = (p: P) => (<S {...p}><path d="M13 3L4 14h7l-1 7 9-11h-7l1-7z" /></S>);
 export const IconThumbUp = (p: P) => (<S {...p}><path d="M7 11v9H4a1 1 0 01-1-1v-7a1 1 0 011-1h3z" /><path d="M7 11l4-7a2 2 0 012 2v3h5a2 2 0 012 2.3l-1.2 6A2 2 0 0118.8 20H7" /></S>);
 export const IconThumbDown = (p: P) => (<S {...p}><path d="M17 13V4h3a1 1 0 011 1v7a1 1 0 01-1 1h-3z" /><path d="M17 13l-4 7a2 2 0 01-2-2v-3H6a2 2 0 01-2-2.3l1.2-6A2 2 0 015.2 4H17" /></S>);
+export const IconUsers = (p: P) => (<S {...p}><circle cx="9" cy="8" r="3.5" /><path d="M3 20a6 6 0 0112 0" /><circle cx="17" cy="9" r="2.5" /><path d="M15 14h2a4 4 0 014 4" /></S>);
 export const IconQuote = (p: P) => (<S {...p}><path d="M7 7h4v4H7zM13 7h4v4h-4z" /><path d="M7 11c0 2 1 3 3 3M13 11c0 2 1 3 3 3" /></S>);

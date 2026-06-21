@@ -128,9 +128,24 @@ export const api = {
   autoPolicy: () => get<AutoPolicy>("/api/policy/auto-promote"),
   setAutoPolicy: (patch: Partial<AutoPolicy>) =>
     post<AutoPolicy>("/api/policy/auto-promote", patch),
+  fleet: (domain?: string) => {
+    const qs = domain ? `?domain=${encodeURIComponent(domain)}` : "";
+    return get<{ agents: FleetAgent[] }>(`/api/fleet${qs}`);
+  },
+  registerAgent: (agent: { agent_id: string; domain?: string; name?: string; tags?: string[] }) =>
+    post<FleetAgent>("/api/fleet/register", agent),
   authConfig: () => get<{ enabled: boolean; provider: string | null }>("/api/auth/config"),
   me: () => get<AuthMe>("/api/auth/me"),
   logout: () => post<{ ok: boolean }>("/api/auth/logout"),
+};
+
+export type FleetAgent = {
+  agent_id: string;
+  domain: string;
+  name: string;
+  tags: string[];
+  current_generation: number | null;
+  playbook_hash: string | null;
 };
 
 export type AuthMe = {
