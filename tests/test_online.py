@@ -81,13 +81,43 @@ def test_shadow_ties_split():
 
 
 def test_shadow_ready_to_promote_gates_on_n_and_ci():
+    """Stats-side guardrails — assumes judge trust is already established."""
     runner = ShadowRunner(AlwaysChildWinsJudge(), child=lambda t: "c")
     for i in range(10):
         runner.observe(f"q{i}", "p")
-    assert not runner.ready_to_promote(min_n=30)   # too few samples
+    assert not runner.ready_to_promote(min_n=30, trust=1.0)   # too few samples
     for i in range(30):
         runner.observe(f"r{i}", "p")
-    assert runner.ready_to_promote(min_n=30)        # 40 wins, CI clears
+    # 40 wins, CI clears, trust is high → ready
+    assert runner.ready_to_promote(min_n=30, trust=1.0)
+
+
+def test_shadow_ready_to_promote_blocks_without_trust_signal():
+    """Even with a perfect live record, no judge-trust signal blocks promotion.
+
+    Same guardrail as the A4 auto-policy: a strong win-rate produced by an
+    untrusted judge isn't enough to override human review.
+    """
+    runner = ShadowRunner(AlwaysChildWinsJudge(), child=lambda t: "c")
+    for i in range(40):
+        runner.observe(f"q{i}", "p")
+    assert runner.stats.win_rate == 1.0  # judge always picks child
+    # No trust signal yet (cold start) → blocked.
+    assert not runner.ready_to_promote(min_n=30, trust=None)
+    # Trust below the default min (0.80) → still blocked.
+    assert not runner.ready_to_promote(min_n=30, trust=0.6)
+    # Trust over min → cleared.
+    assert runner.ready_to_promote(min_n=30, trust=0.85)
+
+
+def test_shadow_ready_to_promote_min_trust_is_tunable():
+    """Operators can tighten the trust bar without code change."""
+    runner = ShadowRunner(AlwaysChildWinsJudge(), child=lambda t: "c")
+    for i in range(40):
+        runner.observe(f"q{i}", "p")
+    # 0.85 trust would pass the default 0.80, but not a stricter 0.90.
+    assert runner.ready_to_promote(min_n=30, trust=0.85, min_trust=0.80)
+    assert not runner.ready_to_promote(min_n=30, trust=0.85, min_trust=0.90)
 
 
 # ─── canary controller ───────────────────────────────────────────────────────

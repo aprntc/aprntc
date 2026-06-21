@@ -733,18 +733,24 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     # -- A2: online shadow + canary read endpoints ---------------------------
     @app.get("/api/online/shadow")
-    def get_shadow() -> dict[str, Any]:
+    def get_shadow(request: Request) -> dict[str, Any]:
         """Live shadow stats — child-vs-parent win-rate + Wilson CI on real traffic.
 
         Returns ``available: false`` when no ShadowRunner is wired (the dev default).
         In production the runner accumulates as ``observe()`` is called on each
         live request; this endpoint just exposes the running tally read-only.
+
+        ``ready_to_promote`` ALSO requires the A3-derived judge trust (same
+        guardrail as the offline auto-policy): a strong live win-rate produced
+        by an untrusted judge isn't enough.
         """
         runner = state.shadow
         if runner is None:
             return {"available": False}
         s = runner.stats
         lo, hi = s.ci()
+        trust_report = _compute_store_trust(request)
+        trust_value = trust_report.value if trust_report else None
         return {
             "available": True,
             "n": s.n,
@@ -756,7 +762,12 @@ def create_app(state: AppState | None = None) -> FastAPI:
             "loss_rate": s.loss_rate,
             "ci_low": lo,
             "ci_high": hi,
-            "ready_to_promote": runner.ready_to_promote(),
+            "ready_to_promote": runner.ready_to_promote(trust=trust_value),
+            "trust": {
+                "value": trust_value,
+                "n": trust_report.n if trust_report else 0,
+                "min_n": trust_report.min_n if trust_report else None,
+            } if trust_report else None,
         }
 
     @app.get("/api/online/canary")

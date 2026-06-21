@@ -89,7 +89,30 @@ function ShadowPanel({ s }: { s: ShadowStats }) {
           tone={(s.loss_rate ?? 0) < 0.10 ? "success" : "danger"}
         />
       </div>
+      {s.trust && <ShadowTrustLine trust={s.trust} />}
     </section>
+  );
+}
+
+function ShadowTrustLine({ trust }: { trust: NonNullable<ShadowStats["trust"]> }) {
+  // A3 → shadow gate: the judge that drives live win-rate must itself have
+  // earned reliability against the anchor before ready_to_promote can clear.
+  if (trust.value == null) {
+    const threshold = trust.min_n ? ` (need ${trust.min_n})` : "";
+    return (
+      <div className="text-[11px] text-faint">
+        Judge trust: insufficient data — {trust.n} joint judge+anchor episodes{threshold}.
+        Promotion is blocked until trust is established.
+      </div>
+    );
+  }
+  const tone = trust.value >= 0.8 ? "text-success" : trust.value >= 0.6 ? "text-warning" : "text-danger";
+  return (
+    <div className="text-[11px]">
+      <span className="text-faint">Judge trust: </span>
+      <span className={tone}>{pct(trust.value)}</span>
+      <span className="text-faint"> (n={trust.n} joint judge+anchor episodes)</span>
+    </div>
   );
 }
 

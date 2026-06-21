@@ -158,6 +158,11 @@ export type ShadowStats = {
   ci_low?: number;
   ci_high?: number;
   ready_to_promote?: boolean;
+  trust?: {
+    value: number | null;
+    n: number;
+    min_n: number | null;
+  } | null;
 };
 
 export type CanaryArm = { n: number; mean_reward: number };

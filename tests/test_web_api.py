@@ -256,6 +256,51 @@ def test_online_shadow_returns_stats_when_wired(tmp_path):
     assert r["ready_to_promote"] is True
 
 
+def test_online_shadow_includes_trust_field(tmp_path, store):
+    """A3 → shadow: trust scalar accompanies the live stats; ready_to_promote
+    incorporates it (a strong win-rate alone with an untrusted judge isn't enough).
+    """
+    from aprntc.online.shadow import ShadowStats
+
+    class _Runner:
+        # 40 samples, 36 wins / 3 losses / 1 tie → win-rate 90%, loss-rate 7.5%,
+        # Wilson CI low ~0.77 (clears 0.50). All stats-side guardrails pass; the
+        # only remaining gate is the A3 judge trust.
+        stats = ShadowStats(n=40, wins=36.0, losses=3.0, ties=1, errors=0)
+        def ready_to_promote(self, **kwargs):
+            # Delegate to the REAL implementation so the trust-gate path is exercised.
+            from aprntc.online.shadow import ShadowRunner
+            return ShadowRunner.ready_to_promote(self, **kwargs)
+
+    # No labels in the store → trust is None → ready blocked.
+    c = _client(tmp_path, store=store)
+    # Patch the existing client with the shadow runner via a fresh AppState.
+    fresh_state = AppState(
+        lineage_path=str(tmp_path / "lineage.json"),
+        bundle_path=str(tmp_path / "bundle.json"),
+        auto_policy_path=str(tmp_path / "auto_policy.json"),
+        store=store,
+        shadow=_Runner(),
+    )
+    c2 = TestClient(create_app(fresh_state))
+    r = c2.get("/api/online/shadow").json()
+    assert r["available"] is True
+    assert r["trust"]["value"] is None and r["trust"]["n"] == 0
+    assert r["ready_to_promote"] is False  # no trust signal → blocked
+
+    # Seed 10 episodes where the judge tracks the outcome → trust ≈ 1.0.
+    for i in range(10):
+        ep = Episode(task_input=f"q{i}", collector=Collector.SDK_WRAPPER,
+                     final_output="ok", turns=[Turn(turn_index=0)])
+        eid = store.put_episode(ep, scrub=False)
+        store.attach_label(eid, Label(source=LabelSource.OUTCOME, score=1.0, confidence=1.0))
+        store.attach_label(eid, Label(source=LabelSource.JUDGE, score=1.0, confidence=0.9))
+    r2 = c2.get("/api/online/shadow").json()
+    assert r2["trust"]["value"] == pytest.approx(1.0)
+    assert r2["trust"]["n"] == 10
+    assert r2["ready_to_promote"] is True  # win-rate + CI + trust all clear
+
+
 def test_online_canary_returns_state_when_wired(tmp_path):
     """A2: CanaryController state (status, fraction, arms) surfaces through the endpoint."""
     from aprntc.online.canary import CanaryController

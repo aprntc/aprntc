@@ -108,9 +108,19 @@ class ShadowRunner:
             self.stats.ties += 1
 
     def ready_to_promote(self, *, min_n: int = 30, win_rate_min: float = 0.55,
-                         ci_low_min: float = 0.50, loss_rate_max: float = 0.10) -> bool:
-        """True when accumulated live shadow stats clear the acceptance bar."""
+                         ci_low_min: float = 0.50, loss_rate_max: float = 0.10,
+                         trust: float | None = None, min_trust: float = 0.80) -> bool:
+        """True when accumulated live shadow stats clear the acceptance bar.
+
+        Mirrors the A4 auto-promote guardrail: a strong live win-rate alone isn't
+        enough if the JUDGE that produced those wins hasn't earned reliability.
+        Pass ``trust`` (the A3 judge↔anchor agreement, e.g. from
+        :func:`aprntc.eval.fusion.compute_trust`). ``None`` ⇒ no trust signal yet
+        ⇒ stay blocked. ``min_trust`` defaults to 0.80, matching ``AutoPromotionPolicy``.
+        """
         if self.stats.n < min_n:
+            return False
+        if trust is None or trust < min_trust:
             return False
         lo, _ = self.stats.ci()
         return (self.stats.win_rate >= win_rate_min and lo > ci_low_min
