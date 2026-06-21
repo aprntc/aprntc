@@ -242,6 +242,57 @@ def test_otel_batch_filters():
 
 # ─── MCP interceptor ─────────────────────────────────────────────────────────
 
+def test_mcp_ingest_against_real_fastmcp_tool():
+    """Integration test against the live MCP SDK — proves the wire format mapping
+    holds against a real FastMCP tool call (which is what a gateway like
+    ContextForge would intercept and log in production). Skipped when [mcp]
+    isn't installed."""
+    pytest.importorskip("mcp.server.fastmcp")
+    import asyncio
+    from mcp.server.fastmcp import FastMCP
+
+    server = FastMCP("aprntc-test")
+
+    @server.tool()
+    def kb_lookup(query: str) -> str:
+        """Look up a fact in the test KB."""
+        return f"answer for {query}"
+
+    # Drive a real MCP tool call. FastMCP.call_tool returns the live MCP
+    # response shape (the same the gateway sees on the wire).
+    result = asyncio.run(server.call_tool("kb_lookup", {"query": "refund?"}))
+    # Construct the record the way a gateway log would describe one call.
+    record = {
+        "tool.name": "kb_lookup",
+        "tool.arguments": {"query": "refund?"},
+        "tool.result": _mcp_result_text(result),
+        "duration_ms": 12.3,
+    }
+    step = mcp_record_to_step(record, step_index=0)
+    assert step is not None
+    assert step.tool_name == "kb_lookup"
+    assert step.tool_args == {"query": "refund?"}
+    assert "answer for refund?" in str(step.tool_result)
+    # MCP gives the tool BOUNDARY directly — full fidelity.
+    assert step.source_fidelity is SourceFidelity.FULL
+
+    episode = mcp_records_to_episode([record], task_input="how do refunds work?")
+    assert episode is not None
+    assert episode.collector is Collector.MCP
+    assert episode.turns[0].steps[0].tool_name == "kb_lookup"
+
+
+def _mcp_result_text(result):
+    """Extract the text payload from a FastMCP call_tool result (tolerant)."""
+    if isinstance(result, tuple):
+        result = result[0]
+    if isinstance(result, list) and result:
+        # MCP CallToolResult-style: list of content parts; grab the first text.
+        first = result[0]
+        return getattr(first, "text", None) or str(first)
+    return str(result)
+
+
 def test_mcp_record_to_step_full_fidelity():
     rec = {"tool_name": "search_docs", "arguments": {"q": "x"}, "result": {"hits": 2},
            "duration_ms": 12.5}

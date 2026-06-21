@@ -264,6 +264,21 @@ The reference external-agent integration loop is proven on live infra:
   live LiteLLM library (catches contract drift on upgrades). 318 tests total.
 - OTel + MCP + A2A live-verify still gated on their external services (separate work).
 
+### A1 — MCP ingester LIVE-VERIFIED end-to-end (2026-06-21)
+The MCP tool-boundary path is now proven against the live MCP SDK:
+- `scripts/demo_mcp_agent.py` — self-contained: a tiny `FastMCP` server with a
+  `kb_lookup` tool, an "external agent" that calls the tool via the live MCP
+  SDK, each call+result wrapped as a gateway-style record (the same shape a
+  real OSS MCP gateway like IBM ContextForge would log), records flow through
+  `mcp_records_to_episode` into the trajectory store with `collector=mcp`.
+- **Verified:** real `FastMCP.call_tool` invocation → 1 tool step → Episode
+  `ep_759224921ba3…` with `collector=mcp`, full fidelity (tool name, args,
+  result text, duration). Surfaces under the A1 filter chip alongside
+  `egress_proxy` + `otel` + `sdk_wrapper`.
+- Plus an integration test (`test_mcp_ingest_against_real_fastmcp_tool`) that
+  exercises `mcp_record_to_step` and `mcp_records_to_episode` against the
+  live MCP SDK call shape — catches contract drift on SDK upgrades.
+
 ### A1 — OTel ingester LIVE-VERIFIED end-to-end (2026-06-21)
 The OTel-instrumented external agent path is also proven:
 - `scripts/demo_otel_agent.py` — a self-contained customer program instruments a real
