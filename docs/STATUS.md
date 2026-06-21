@@ -226,6 +226,19 @@ Three collectors behind the AgentTap core, all normalize → Episode, all unit-t
 - shared `tap/normalize.py`; `tap/README.md`; +19 tests (188 total).
 - Live-verify deferred (each needs its external service); mapping logic proven. → A2 next.
 
+### Postgres backend LIVE-VERIFIED (2026-06-21)
+The multi-worker store path is now proven against real Postgres 16 (Docker):
+```
+APRNTC_TEST_PG_URL="postgresql://postgres:test@localhost:5432/postgres" \
+  pytest tests/test_pg_store.py -v
+→ 13 passed in 0.37s
+```
+The full parity suite cleared on the live database — schema auto-creation,
+upsert (`ON CONFLICT DO UPDATE`), PII scrub, append-only labels, outcome join,
+`counts_by_collector`, fused-reward weighting, `delete_by_subject` cascade, TTL
+purge. Customers can now point `APRNTC_DB_URL=postgresql://…` and run uvicorn
+with `--workers N` for real concurrency — no SQLite write-lock bottleneck.
+
 ### BytePlus RAG quality — semantic retriever shipped (2026-06-21)
 ROADMAP "Known issues" flagged keyword retrieval (TF-IDF + title-boost) as topping out
 around 1040 chunks. Concrete baseline now measured: **keyword recall@4 = 10/20 (50%)**
