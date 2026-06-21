@@ -226,7 +226,30 @@ Three collectors behind the AgentTap core, all normalize → Episode, all unit-t
 - shared `tap/normalize.py`; `tap/README.md`; +19 tests (188 total).
 - Live-verify deferred (each needs its external service); mapping logic proven. → A2 next.
 
-### A1 — Egress proxy LIVE-VERIFIED end-to-end (2026-06-21)
+### BytePlus RAG quality — semantic retriever shipped (2026-06-21)
+ROADMAP "Known issues" flagged keyword retrieval (TF-IDF + title-boost) as topping out
+around 1040 chunks. Concrete baseline now measured: **keyword recall@4 = 10/20 (50%)**
+on the BytePlus GOLD set (`scripts/eval_byteplus_retrieval.py --keyword-only`).
+Misses are the paraphrased-question class: "deep reasoning" → expected `Deepreasoning`
+but matched `Pricing`; "auth header" → matched signing docs instead of Chat API; etc.
+
+**Built (offline-verified):**
+- `demos/byteplus/kb_semantic.py` — `SemanticKnowledgeBase` mirrors the keyword KB's
+  `search(query, k)` interface but uses VikingDB server-side vectorize (skylark
+  embedding, same machinery as the lessons memory adapter). Dedicated collection
+  schema (chunk_id PK, text=vector field, doc/section/chunk_ord scalar). Drop-in
+  swap for the agent — no agent code change. 9 new unit tests (offline via
+  RecordingTransport, mirrors `tests/test_memory.py` pattern). 327 tests total.
+- `scripts/index_byteplus_kb.py` — one-time indexer. Idempotent; rate-printed.
+- `scripts/eval_byteplus_retrieval.py` — A/B recall@k between keyword and
+  semantic on the GOLD set; prints per-question hits + disagreements + summary.
+
+**LIVE-BLOCKER (expected, same as Stage 5):** programmatic control-plane create
+hits `InvalidActionOrVersion` on this VikingDB instance — the user provisions
+the collection from the BytePlus VikingDB console (schema documented in
+`demos/byteplus/README.md`). Once provisioned, the indexer + A/B eval run live
+without code changes. The keyword baseline (50%) is now the documented number
+to beat.
 The reference external-agent integration loop is proven on live infra:
 - `scripts/demo_external_agent.py` — a small "external customer" program (no aprntc imports beyond
   `make_proxy_logger`) fetches its playbook via HTTP (`GET /api/playbooks/{id}/active`, B0), makes a
