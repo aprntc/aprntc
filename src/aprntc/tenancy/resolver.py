@@ -48,6 +48,23 @@ class TenantResolver:
             return None
         return self._context_for(tenant)
 
+    def resolve_tenant_id(self, tenant_id: str | None) -> TenantContext | None:
+        """Return the context for a tenant_id without re-authenticating a key.
+
+        Used by the dashboard session path: a human signs in via Google → the
+        session cookie already proves who they are → we map their tenant_id to
+        its isolated context. Returns None if the tenant is unknown or inactive.
+        """
+        if not tenant_id:
+            return None
+        try:
+            tenant = self._tenants.get(tenant_id)
+        except KeyError:
+            return None
+        if not tenant.active:
+            return None
+        return self._context_for(tenant)
+
     def _context_for(self, tenant: Tenant) -> TenantContext:
         tid = tenant.tenant_id
         if tid not in self._ctx_cache:

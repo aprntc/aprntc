@@ -39,15 +39,47 @@ class AppState:
     agent_run: Any | None = None
     # B0: per-agent playbook registry external agents fetch from (lazy default in from_env)
     playbooks: Any | None = None
-    # B2: optional TenantResolver. When set, the externally-facing playbook endpoints
-    # require an API key and serve each tenant's ISOLATED registry. When None, the API
-    # runs single-tenant/dev mode using `playbooks` above (existing behavior).
+    # B2: optional TenantResolver. When set, the data endpoints (review/lineage/
+    # trajectories/lessons/feedback/agents/run) AND the playbook endpoints require auth
+    # (X-API-Key, Bearer, or a valid dashboard session cookie) and serve each tenant's
+    # ISOLATED data. When None, the API runs single-tenant/dev mode (existing behavior).
     tenant_resolver: Any | None = None
+    # Factory that builds a tenant's agent-runner closure over its own TrajectoryStore.
+    # Set by from_env (or tests) when an agent runner is configured. Shared client/model/kb
+    # are captured by the factory; each call gets a tenant-scoped store + memory.
+    agent_run_factory: Any | None = None
     # B4: human dashboard auth (Google sign-in). When all set, /api/auth/* is live and
     # /api/auth/me reflects the logged-in user. When None, dashboard runs open (dev).
     auth_provider: Any | None = None     # OAuthProvider (Google or Mock)
     session_signer: Any | None = None    # SessionSigner
     users: Any | None = None             # UserStore
+    # Per-tenant caches (built lazily on first request, kept across requests).
+    _tenant_stores: dict[str, TrajectoryStore] = field(default_factory=dict)
+    _tenant_memory: dict[str, Any] = field(default_factory=dict)
+    _tenant_agent_runs: dict[str, Any] = field(default_factory=dict)
+
+    def tenant_store(self, ctx: Any) -> TrajectoryStore:
+        """Cached per-tenant TrajectoryStore — reopens once per tenant per process."""
+        tid = ctx.tenant_id
+        if tid not in self._tenant_stores:
+            self._tenant_stores[tid] = TrajectoryStore(ctx.db_path)
+        return self._tenant_stores[tid]
+
+    def tenant_memory(self, ctx: Any) -> Any | None:
+        """Cached per-tenant memory_search closure (None if VikingDB unconfigured)."""
+        tid = ctx.tenant_id
+        if tid not in self._tenant_memory:
+            self._tenant_memory[tid] = _build_memory_search(tenant_id=tid)
+        return self._tenant_memory[tid]
+
+    def tenant_agent_run(self, ctx: Any) -> Any | None:
+        """Cached per-tenant agent runner that writes into the tenant's own store."""
+        if self.agent_run_factory is None:
+            return None
+        tid = ctx.tenant_id
+        if tid not in self._tenant_agent_runs:
+            self._tenant_agent_runs[tid] = self.agent_run_factory(self.tenant_store(ctx))
+        return self._tenant_agent_runs[tid]
 
     def lineage(self) -> LineageRegistry:
         return LineageRegistry(self.lineage_path)
@@ -75,7 +107,8 @@ class AppState:
         """
         store = TrajectoryStore(db_path)
         memory_search = _build_memory_search(load_dotenv=load_dotenv)
-        agent_run = _build_agent_run(store, load_dotenv=load_dotenv)
+        agent_run_factory = _build_agent_run_factory(load_dotenv=load_dotenv)
+        agent_run = agent_run_factory(store) if agent_run_factory is not None else None
         from aprntc.serving import PlaybookRegistry
         auth_provider, session_signer, users = _build_auth(load_dotenv=load_dotenv)
         return cls(
@@ -84,6 +117,7 @@ class AppState:
             store=store,
             memory_search=memory_search,
             agent_run=agent_run,
+            agent_run_factory=agent_run_factory,
             playbooks=PlaybookRegistry("playbooks.json"),
             auth_provider=auth_provider,
             session_signer=session_signer,
@@ -91,18 +125,29 @@ class AppState:
         )
 
 
-def _build_memory_search(*, load_dotenv: bool = True) -> Any | None:
-    """Return a ``(query, k) -> list[dict]`` retriever backed by VikingDB, or None."""
+def _build_memory_search(*, load_dotenv: bool = True, tenant_id: str | None = None) -> Any | None:
+    """Return a ``(query, k) -> list[dict]`` retriever backed by VikingDB, or None.
+
+    When ``tenant_id`` is set, use a tenant-specific collection name so each
+    tenant's lessons are isolated. The collection must exist (provisioned out
+    of band); if missing, retrieval returns the "no results" path and the
+    lessons endpoint reports the error rather than 500-ing.
+    """
     try:
         from aprntc.config import Settings
         from aprntc.memory.vikingdb import VikingDBMemoryStore
 
         settings = Settings.from_env(dotenv=".env" if load_dotenv else None)
         settings.vikingdb.validate()  # raises if creds missing
+        if tenant_id:
+            collection = f"{tenant_id}_aprntc_collection"
+            index = f"{tenant_id}_aprntc_index"
+        else:
+            collection, index = "ankur_aprntc_collection", "ankur_aprntc_index"
         mem = VikingDBMemoryStore(
             settings.vikingdb,
-            collection="ankur_aprntc_collection",
-            index="ankur_aprntc_index",
+            collection=collection,
+            index=index,
             dim=2048,
         )
     except Exception:
@@ -124,12 +169,12 @@ def _build_memory_search(*, load_dotenv: bool = True) -> Any | None:
     return search
 
 
-def _build_agent_run(store: TrajectoryStore, *, load_dotenv: bool = True) -> Any | None:
-    """Return an ``(agent_id, task) -> dict`` runner backed by live ModelArk, or None.
+def _build_agent_run_factory(*, load_dotenv: bool = True) -> Any | None:
+    """Return a ``(store) -> runner`` factory backed by live ModelArk, or None.
 
-    Runs the chosen demo agent on the task, captures the trajectory into the shared
-    store (so it appears on the Trajectories screen), scores it with the matching
-    outcome scorer, and returns the answer + the captured steps + the reward.
+    The expensive setup (ModelArk client, model id, BytePlus KB) is captured once
+    and reused; each call to the factory binds a specific TrajectoryStore. Used by
+    both single-tenant (one shared store) and multi-tenant (one runner per tenant) modes.
     """
     try:
         from aprntc.byteplus.modelark import ModelArkClient
@@ -151,6 +196,25 @@ def _build_agent_run(store: TrajectoryStore, *, load_dotenv: bool = True) -> Any
             _kb_cache["kb"] = build_kb()
         return _kb_cache["kb"]
 
+    def factory(store: TrajectoryStore) -> Any:
+        return _make_agent_run(store, client, model, _byteplus_kb)
+
+    return factory
+
+
+def _build_agent_run(store: TrajectoryStore, *, load_dotenv: bool = True) -> Any | None:
+    """Return an ``(agent_id, task) -> dict`` runner — single-store convenience.
+
+    Thin wrapper over the factory above for the legacy dev-mode path; behaves
+    exactly like the original (the factory is the new shape, this preserves callers).
+    """
+    factory = _build_agent_run_factory(load_dotenv=load_dotenv)
+    return factory(store) if factory is not None else None
+
+
+def _make_agent_run(store: TrajectoryStore, client: Any, model: str, kb_fn: Any) -> Any:
+    """Build the agent-run closure for one TrajectoryStore (shared or per-tenant)."""
+
     def run(agent_id: str, task: str) -> dict[str, Any]:
         from aprntc.demos.agents import RagAgent, SupportAgent
         from aprntc.demos.corpus import GOLD
@@ -163,7 +227,7 @@ def _build_agent_run(store: TrajectoryStore, *, load_dotenv: bool = True) -> Any
 
         if agent_id == "byteplus":
             from aprntc.demos.byteplus import ByteplusSupportAgent, GOLD as BP_GOLD, byteplus_outcome
-            agent = ByteplusSupportAgent(client, tap, _byteplus_kb(), model=model, rich=True)
+            agent = ByteplusSupportAgent(client, tap, kb_fn(), model=model, rich=True)
             res = agent.run(task, generation_id="try")
             ep = store.get_episode(res.episode_id)
             cited = res.cited
@@ -244,6 +308,60 @@ def create_app(state: AppState | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    _SESSION_COOKIE = "aprntc_session"
+
+    # -- tenant resolution (B2 extension) -------------------------------------
+    # When `state.tenant_resolver` is set, every data endpoint is gated: callers
+    # must present either an API key (X-API-Key / Bearer — machine clients) or a
+    # valid dashboard session cookie (human signed in via Google). Otherwise → 401.
+    # In dev/single-tenant mode (no resolver) the helpers fall back to shared state.
+    def _resolve_ctx(request: "Request") -> Any | None:
+        if state.tenant_resolver is None:
+            return None
+        # 1) machine path
+        if (key := _api_key(request)) is not None:
+            ctx = state.tenant_resolver.resolve(key)
+            if ctx is not None:
+                return ctx
+        # 2) dashboard session path
+        if state.session_signer is not None:
+            from aprntc.auth import SessionError
+            try:
+                payload = state.session_signer.verify(request.cookies.get(_SESSION_COOKIE))
+                ctx = state.tenant_resolver.resolve_tenant_id(payload.get("tid"))
+                if ctx is not None:
+                    return ctx
+            except SessionError:
+                pass
+        raise HTTPException(status_code=401, detail="invalid or missing credentials")
+
+    def _resolve_store(request: "Request") -> TrajectoryStore:
+        ctx = _resolve_ctx(request)
+        if ctx is not None:
+            return state.tenant_store(ctx)
+        if state.store is None:
+            raise HTTPException(status_code=503, detail="no store configured")
+        return state.store
+
+    def _resolve_lineage(request: "Request") -> LineageRegistry:
+        ctx = _resolve_ctx(request)
+        return LineageRegistry(ctx.lineage_path) if ctx is not None else state.lineage()
+
+    def _resolve_bundle(request: "Request") -> dict[str, Any]:
+        ctx = _resolve_ctx(request)
+        if ctx is None:
+            return state.bundle()
+        p = Path(ctx.bundle_path)
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+    def _resolve_memory_search(request: "Request") -> Any | None:
+        ctx = _resolve_ctx(request)
+        return state.tenant_memory(ctx) if ctx is not None else state.memory_search
+
+    def _resolve_agent_run(request: "Request") -> Any | None:
+        ctx = _resolve_ctx(request)
+        return state.tenant_agent_run(ctx) if ctx is not None else state.agent_run
+
     # -- health ----------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -263,9 +381,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     # -- review / gate ---------------------------------------------------
     @app.get("/api/review")
-    def get_review() -> dict[str, Any]:
+    def get_review(request: Request) -> dict[str, Any]:
         """The current candidate review bundle: gate report + attributable diff."""
-        bundle = state.bundle()
+        bundle = _resolve_bundle(request)
         gate = bundle.get("gate", {})
         passed = gate.get("passed")
         if passed is None:
@@ -281,8 +399,8 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     # -- lineage ---------------------------------------------------------
     @app.get("/api/lineage")
-    def get_lineage() -> dict[str, Any]:
-        reg = state.lineage()
+    def get_lineage(request: Request) -> dict[str, Any]:
+        reg = _resolve_lineage(request)
         cur = reg.current
         return {
             "current": cur.to_dict() if cur else None,
@@ -290,11 +408,11 @@ def create_app(state: AppState | None = None) -> FastAPI:
         }
 
     @app.post("/api/lineage/promote")
-    def promote(body: dict[str, Any]) -> dict[str, Any]:
+    def promote(body: dict[str, Any], request: Request) -> dict[str, Any]:
         playbook_hash = body.get("playbook_hash")
         if not playbook_hash:
             raise HTTPException(status_code=400, detail="playbook_hash required")
-        reg = state.lineage()
+        reg = _resolve_lineage(request)
         if reg.current is None:
             reg.register_parent(playbook_hash, note="seeded at first promote")
             return {"action": "registered_parent", "current": reg.current.to_dict()}
@@ -303,8 +421,8 @@ def create_app(state: AppState | None = None) -> FastAPI:
         return {"action": "promoted", "current": gen.to_dict()}
 
     @app.post("/api/lineage/rollback")
-    def rollback() -> dict[str, Any]:
-        reg = state.lineage()
+    def rollback(request: Request) -> dict[str, Any]:
+        reg = _resolve_lineage(request)
         try:
             gen = reg.rollback()
         except RuntimeError as e:
@@ -313,36 +431,42 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     # -- trajectories ----------------------------------------------------
     @app.get("/api/trajectories")
-    def list_trajectories(limit: int = 50, generation: str | None = None) -> dict[str, Any]:
-        if state.store is None:
+    def list_trajectories(request: Request, limit: int = 50,
+                          generation: str | None = None) -> dict[str, Any]:
+        # In dev mode an unconfigured store yields an empty list (existing behavior);
+        # in tenant mode `_resolve_store` enforces auth and returns the tenant store.
+        if state.tenant_resolver is None and state.store is None:
             return {"episodes": [], "count": 0}
-        eps = state.store.query(generation_id=generation, limit=limit)
+        store = _resolve_store(request)
+        eps = store.query(generation_id=generation, limit=limit)
         return {
-            "count": state.store.count(),
-            "episodes": [_episode_summary(e, state.store) for e in eps],
+            "count": store.count(),
+            "episodes": [_episode_summary(e, store) for e in eps],
         }
 
     @app.get("/api/trajectories/{episode_id}")
-    def get_trajectory(episode_id: str) -> dict[str, Any]:
-        if state.store is None:
+    def get_trajectory(episode_id: str, request: Request) -> dict[str, Any]:
+        if state.tenant_resolver is None and state.store is None:
             raise HTTPException(status_code=404, detail="no store configured")
+        store = _resolve_store(request)
         try:
-            ep = state.store.get_episode(episode_id)
+            ep = store.get_episode(episode_id)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"no episode {episode_id}")
         data = ep.to_dict()
-        data["labels"] = [l.to_dict() for l in state.store.labels_for(episode_id)]
-        fused = state.store.fused_reward(episode_id)
+        data["labels"] = [l.to_dict() for l in store.labels_for(episode_id)]
+        fused = store.fused_reward(episode_id)
         data["fused_reward"] = {"reward": fused[0], "confidence": fused[1]} if fused else None
         return data
 
     # -- lessons (experience memory) ------------------------------------
     @app.get("/api/lessons")
-    def search_lessons(q: str = "", k: int = 10) -> dict[str, Any]:
-        if state.memory_search is None:
+    def search_lessons(request: Request, q: str = "", k: int = 10) -> dict[str, Any]:
+        search = _resolve_memory_search(request)
+        if search is None:
             return {"lessons": [], "query": q, "available": False}
         try:
-            results = state.memory_search(q, k)
+            results = search(q, k)
         except Exception as e:  # memory is best-effort; surface the error, don't 500
             return {"lessons": [], "query": q, "available": True, "error": str(e)}
         return {"lessons": results, "query": q, "available": True}
@@ -391,22 +515,23 @@ def create_app(state: AppState | None = None) -> FastAPI:
     _AGENT_IDS = ("byteplus", "support", "rag")
 
     @app.post("/api/agents/run")
-    def run_agent(body: dict[str, Any]) -> dict[str, Any]:
+    def run_agent(body: dict[str, Any], request: Request) -> dict[str, Any]:
         agent_id = body.get("agent_id")
         task = (body.get("task") or "").strip()
         if agent_id not in _AGENT_IDS:
             raise HTTPException(status_code=400, detail=f"agent_id must be one of {_AGENT_IDS}")
         if not task:
             raise HTTPException(status_code=400, detail="task is required")
-        if state.agent_run is None:
+        runner = _resolve_agent_run(request)
+        if runner is None:
             raise HTTPException(status_code=503, detail="agent runtime not configured (needs ModelArk keys)")
         try:
-            return state.agent_run(agent_id, task)
+            return runner(agent_id, task)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"agent run failed: {e}")
 
     @app.post("/api/feedback")
-    def feedback(body: dict[str, Any]) -> dict[str, Any]:
+    def feedback(body: dict[str, Any], request: Request) -> dict[str, Any]:
         """Record a user's 👍/👎 on an answer as an EXPLICIT-feedback label.
 
         Explicit feedback outranks the judge in fusion (ADR 0006), so this is real
@@ -418,10 +543,11 @@ def create_app(state: AppState | None = None) -> FastAPI:
         vote = body.get("vote")
         if vote not in ("up", "down"):
             raise HTTPException(status_code=400, detail="vote must be 'up' or 'down'")
-        if state.store is None:
+        if state.tenant_resolver is None and state.store is None:
             raise HTTPException(status_code=503, detail="no store configured")
+        store = _resolve_store(request)
         try:
-            state.store.attach_label(
+            store.attach_label(
                 episode_id,
                 Label(source=LabelSource.USER_EXPLICIT,
                       score=1.0 if vote == "up" else 0.0,
@@ -430,7 +556,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
             )
         except KeyError:
             raise HTTPException(status_code=404, detail=f"no episode {episode_id}")
-        fused = state.store.fused_reward(episode_id)
+        fused = store.fused_reward(episode_id)
         return {"ok": True, "fused_reward": fused[0] if fused else None}
 
     # -- B0/B2: playbook serving — tenant-isolated when a resolver is configured --
@@ -488,7 +614,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(e))
 
     # -- B4: human dashboard auth (Google sign-in) ----------------------------
-    _SESSION_COOKIE = "aprntc_session"
+    # (_SESSION_COOKIE is defined above so the tenant resolver can read it too.)
 
     @app.get("/api/auth/config")
     def auth_config() -> dict[str, Any]:

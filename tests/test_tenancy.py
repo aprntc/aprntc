@@ -151,3 +151,163 @@ def test_single_tenant_mode_unaffected(tmp_path):
     c = TestClient(app)
     c.post("/api/playbooks/x/register", json={"system_prompt": "P"})
     assert c.get("/api/playbooks/x/active").status_code == 200  # works with no key
+
+
+# ─── Data endpoints: tenant isolation (extended from playbook-only B2) ───────
+
+from aprntc.trajectory import (  # noqa: E402
+    Collector,
+    Episode,
+    Label,
+    LabelSource,
+    Turn,
+)
+
+
+def test_trajectories_require_key_in_tenant_mode(tmp_path):
+    c, ka, kb = _multitenant_client(tmp_path)
+    # no credentials -> 401 (data endpoints now gate the same as playbook ones)
+    assert c.get("/api/trajectories").status_code == 401
+    assert c.get("/api/trajectories/ep_anything").status_code == 401
+    assert c.get("/api/trajectories", headers={"X-API-Key": "bad"}).status_code == 401
+
+
+def test_trajectories_are_isolated_per_tenant(tmp_path):
+    c, ka, kb = _multitenant_client(tmp_path)
+    # Tenant A's runner writes into A's own store; this simulates that by going
+    # through the resolver path manually.
+    from aprntc.tenancy import TenantStore as _TS
+    from aprntc.tenancy.resolver import TenantResolver as _TR
+    ts = _TS(tmp_path / "t.json")
+    resolver = _TR(ts, data_root=str(tmp_path / "data"))
+    ctx_a = resolver.resolve(ka)
+    from aprntc.trajectory import TrajectoryStore
+    store_a = TrajectoryStore(ctx_a.db_path)
+    ep = Episode(task_input="A's refund?", collector=Collector.SDK_WRAPPER,
+                 final_output="30 days", generation_id="G0", turns=[Turn(turn_index=0)])
+    eid = store_a.put_episode(ep, scrub=False)
+    store_a.close()
+
+    # Tenant A sees it.
+    la = c.get("/api/trajectories", headers={"X-API-Key": ka}).json()
+    assert la["count"] == 1 and la["episodes"][0]["episode_id"] == eid
+
+    # Tenant B is fully empty (same agent, same machine — different store on disk).
+    lb = c.get("/api/trajectories", headers={"X-API-Key": kb}).json()
+    assert lb["count"] == 0 and lb["episodes"] == []
+
+    # Tenant B trying to fetch tenant A's episode id explicitly -> 404 (isolated, not 403).
+    rb = c.get(f"/api/trajectories/{eid}", headers={"X-API-Key": kb})
+    assert rb.status_code == 404
+
+
+def test_lineage_is_isolated_per_tenant(tmp_path):
+    c, ka, kb = _multitenant_client(tmp_path)
+    # A promotes a parent (G0); B's lineage stays empty.
+    r = c.post("/api/lineage/promote", json={"playbook_hash": "abc123"},
+               headers={"X-API-Key": ka})
+    assert r.status_code == 200
+
+    la = c.get("/api/lineage", headers={"X-API-Key": ka}).json()
+    assert la["current"] is not None and la["current"]["playbook_hash"] == "abc123"
+
+    lb = c.get("/api/lineage", headers={"X-API-Key": kb}).json()
+    assert lb["current"] is None and lb["generations"] == []
+
+
+def test_feedback_writes_to_tenant_store(tmp_path):
+    c, ka, kb = _multitenant_client(tmp_path)
+    # Seed tenant A's store with one episode (without going through agents/run).
+    from aprntc.tenancy import TenantStore as _TS
+    from aprntc.tenancy.resolver import TenantResolver as _TR
+    from aprntc.trajectory import TrajectoryStore
+    ts = _TS(tmp_path / "t.json")
+    resolver = _TR(ts, data_root=str(tmp_path / "data"))
+    ctx_a = resolver.resolve(ka)
+    store_a = TrajectoryStore(ctx_a.db_path)
+    ep = Episode(task_input="q?", collector=Collector.SDK_WRAPPER,
+                 final_output="answer", generation_id="G0", turns=[Turn(turn_index=0)])
+    eid = store_a.put_episode(ep, scrub=False)
+    store_a.close()
+
+    # A's thumbs-up persists to A's store.
+    r = c.post("/api/feedback", json={"episode_id": eid, "vote": "up"},
+               headers={"X-API-Key": ka})
+    assert r.status_code == 200 and r.json()["fused_reward"] == 1.0
+
+    # B can't 👍 A's episode — it's not in B's store -> 404.
+    r2 = c.post("/api/feedback", json={"episode_id": eid, "vote": "up"},
+                headers={"X-API-Key": kb})
+    assert r2.status_code == 404
+
+
+def test_review_bundle_is_per_tenant(tmp_path):
+    # Write tenant A a bundle directly into A's isolated bundle_path.
+    from aprntc.tenancy import TenantStore as _TS
+    from aprntc.tenancy.resolver import TenantResolver as _TR
+    ts = _TS(tmp_path / "t.json")
+    _, ka = ts.create_tenant("tenant-a")
+    _, kb = ts.create_tenant("tenant-b")
+    resolver = _TR(ts, data_root=str(tmp_path / "data"))
+    ctx_a = resolver.resolve(ka)
+    Path = __import__("pathlib").Path
+    json_mod = __import__("json")
+    Path(ctx_a.bundle_path).write_text(
+        json_mod.dumps({"candidate_playbook_hash": "h-A", "gate": {"passed": True}}),
+        encoding="utf-8")
+
+    app = create_app(AppState(tenant_resolver=resolver))
+    c = TestClient(app)
+
+    ra = c.get("/api/review", headers={"X-API-Key": ka}).json()
+    assert ra["available"] and ra["candidate_playbook_hash"] == "h-A"
+
+    rb = c.get("/api/review", headers={"X-API-Key": kb}).json()
+    assert rb["available"] is False  # B has no bundle
+
+
+def test_lessons_endpoint_requires_auth_in_tenant_mode(tmp_path):
+    c, ka, kb = _multitenant_client(tmp_path)
+    assert c.get("/api/lessons?q=refund").status_code == 401
+    # With a valid key the auth gate lets the request through. Whether VikingDB
+    # is available depends on local config — we only verify the gate passed (200).
+    r = c.get("/api/lessons?q=refund", headers={"X-API-Key": ka})
+    assert r.status_code == 200 and "available" in r.json()
+
+
+def test_session_cookie_resolves_tenant(tmp_path):
+    """Dashboard humans authenticate via session cookie (not API key)."""
+    from aprntc.auth import SessionSigner
+    from aprntc.tenancy import TenantStore
+    from aprntc.tenancy.resolver import TenantResolver
+
+    ts = TenantStore(tmp_path / "t.json")
+    ts.create_tenant("tenant-a")
+    ts.create_tenant("tenant-b")
+    resolver = TenantResolver(ts, data_root=str(tmp_path / "data"))
+    signer = SessionSigner("test-secret-at-least-sixteen-chars")
+
+    # Seed an episode in tenant A.
+    from aprntc.trajectory import TrajectoryStore
+    ctx_a = resolver.resolve_tenant_id("tenant-a")
+    store_a = TrajectoryStore(ctx_a.db_path)
+    ep = Episode(task_input="hi", collector=Collector.SDK_WRAPPER,
+                 final_output="hello", generation_id="G0", turns=[Turn(turn_index=0)])
+    store_a.put_episode(ep, scrub=False)
+    store_a.close()
+
+    app = create_app(AppState(
+        tenant_resolver=resolver,
+        session_signer=signer,
+    ))
+    c = TestClient(app)
+
+    # Forge a valid session for a tenant-a user.
+    token = signer.issue(user_id="u1", tenant_id="tenant-a")
+    c.cookies.set("aprntc_session", token)
+    r = c.get("/api/trajectories")
+    assert r.status_code == 200 and r.json()["count"] == 1
+
+    # A tampered/invalid session -> 401 (no API key fallback either).
+    c.cookies.set("aprntc_session", "not-a-real-token")
+    assert c.get("/api/trajectories").status_code == 401
