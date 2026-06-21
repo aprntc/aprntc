@@ -5,6 +5,60 @@
 
 ---
 
+## 📌 Session orientation — what's live as of 2026-06-21
+
+The MVP (stages 0–7) and B-track (B0–B4) shipped on 2026-06-14. The
+**2026-06-21 session** landed **13 follow-up PRs** that close the production
+gaps and live-verify the external-agent collector paths.
+
+**Test count:** 348 passing (+ 13 Postgres-gated when `APRNTC_TEST_PG_URL` is set).
+
+**PRs from this session** (each on its own branch off main, all pushed):
+
+| Theme | Branch | Live-verified? |
+|---|---|---|
+| Tenant scope all data endpoints (was playbook-only) | `feat/tenant-scope-data-endpoints` | offline (308 tests) |
+| Collector chips + badges on Trajectories (A1 surfacing) | `feat/a1-collector-visibility` | ✅ via curl |
+| Auto-promote verdict + toggle on Review (A4 surfacing) | `feat/a4-auto-promotion-visibility` | ✅ via curl |
+| Fleet screen + `/api/fleet` (A6 surfacing) | `feat/a6-fleet-view` | ✅ via curl |
+| Shadow & canary screen + endpoints (A2 surfacing) | `feat/a2-shadow-canary-view` | offline |
+| **LiteLLM egress-proxy live-verify** (A1 — first external-agent demo) | `feat/a1-external-agent-live-verify` | ✅ real ModelArk 3.2s |
+| BytePlus RAG semantic retriever (VikingDB) + A/B eval vs keyword baseline (50% recall@4) | `feat/byteplus-rag-semantic-retrieval` | offline + console-provision pending |
+| A3 trust signal → A4 auto-promotion gate | `feat/a3-trust-into-a4-gate` | ✅ via curl |
+| A3 trust signal → live shadow `ready_to_promote` | `feat/shadow-trust-gate` | offline |
+| **Auto-promotion audit log** (append-only JSONL + Review-screen panel) | `feat/auto-promote-audit-log` | ✅ via curl (dedup proven) |
+| **OpenTelemetry ingester live-verify** (A1) | `feat/otel-live-verify` | ✅ real ModelArk 4.8s |
+| **MCP ingester live-verify** (A1) | `feat/mcp-live-verify` | ✅ real MCP SDK |
+| **Postgres backend + multi-worker** + customer onboarding doc | `feat/postgres-store-multiworker` | ✅ Postgres 16 (Docker), 13/13 |
+
+### Live-verification proof in one place
+
+- **Egress-proxy collector** — `scripts/demo_external_agent.py` ran real
+  ModelArk call (3.2s, 76→178 tokens) → Episode `ep_b4857cab5b…` with
+  `collector=egress_proxy`.
+- **OTel ingester** — `scripts/demo_otel_agent.py` ran real ModelArk call
+  (4.8s, 51→290 tokens) → Episode `ep_f693255992a7…` with `collector=otel`.
+- **MCP ingester** — `scripts/demo_mcp_agent.py` drove a real `FastMCP`
+  tool call → Episode `ep_759224921ba3…` with `collector=mcp`, full
+  tool fidelity.
+- **Postgres backend** — `APRNTC_TEST_PG_URL=…` → `pytest tests/test_pg_store.py`
+  → 13/13 against real Postgres 16 in 0.37s.
+
+### Customer onboarding artifact
+
+`docs/ONBOARDING.md` — 5-minute end-to-end guide stitching the four
+collector paths (LiteLLM / OTel / MCP / SDK) with the 5-line wiring
+example per path, plus the playbook fetch API. The single doc a real
+customer reads.
+
+### Only remaining post-MVP item
+
+**A2A collector live-verify** — needs a real A2A server. The mapping
+logic is unit-tested offline (in `tap/a2a_ingest.py`); end-to-end demo
+deferred (user, 2026-06-21).
+
+---
+
 ## Stage 0 — Skeleton + VikingDB signing gate ✅ DONE (2026-06-13)
 **Done:**
 - `aprntc` package under `src/` with dependency-light core + optional extras (`pyproject.toml`).

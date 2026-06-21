@@ -5,6 +5,44 @@
 > **(A) planned v1+ features** (from the planning sessions — advance the product thesis) and
 > **(B) productionization** (make the existing system deployable/robust — engineering, not new features).
 
+## 📌 Post-MVP follow-ups COMPLETED (2026-06-21 session)
+
+Thirteen follow-up PRs landed on 2026-06-21. The originally planned 5-point list is
+fully closed except A2A live-verify; several adjacent gaps were also closed.
+
+**Closed:**
+- ✅ Tenant scoping extended to ALL data endpoints (was playbook-only) —
+  `feat/tenant-scope-data-endpoints`.
+- ✅ A1/A2/A4/A6 surfaced in the dashboard —
+  `feat/a1-collector-visibility`, `feat/a4-auto-promotion-visibility`,
+  `feat/a6-fleet-view`, `feat/a2-shadow-canary-view`.
+- ✅ BytePlus RAG quality — semantic VikingDB retriever (`kb_semantic.py`)
+  shipped + A/B eval vs the keyword baseline (50% recall@4 measured) —
+  `feat/byteplus-rag-semantic-retrieval`.
+- ✅ Live-verify A1 collectors end-to-end against real services:
+  egress-proxy (LiteLLM), OTel SDK, MCP SDK — three separate demo
+  scripts + integration tests.
+- ✅ Postgres backend + multi-worker — `PostgresTrajectoryStore` mirrors
+  the SQLite API, `make_trajectory_store(url)` factory, `APRNTC_DB_URL`
+  env. Live-verified against Postgres 16 (Docker), 13/13 parity tests
+  in 0.37s. `uvicorn --workers N` now safe.
+
+**Bonus closures discovered during the session:**
+- ✅ A3 trust signal wired into A4 auto-promotion gate (was a known
+  intentional gap from the original A4 commit).
+- ✅ A3 trust signal wired into ShadowRunner.ready_to_promote (mirror
+  of the same guardrail on the live path).
+- ✅ Auto-promotion audit log — append-only JSONL + Review-screen panel,
+  idempotent across dashboard polls.
+- ✅ Customer onboarding doc (`docs/ONBOARDING.md`) — 5-line wiring
+  recipe per collector path, plus the playbook fetch API.
+
+**Only outstanding from the original list:** A2A collector live-verify
+(deferred 2026-06-21 — user said "later"; needs a real A2A server).
+
+See [`STATUS.md`](STATUS.md) for the session orientation table + the
+live-verification proofs (episode ids, latencies, tokens).
+
 ## A0 — Distillation quality: DONE + a key product insight (2026-06-14)
 **Built (real, tested):** the distiller now produces (a) **concrete exemplars** — high-reward real
 answers the child imitates (far stronger than abstract rules for in-context learning), (b) **specific
@@ -129,11 +167,16 @@ Ordered by recommended sequence:
    - +9 tests (231 total). Wiring into the dashboard/distillation flow is a follow-up.
 
 ## Known issues / revisit later
-- **BytePlus agent RAG quality** (user, 2026-06-14): retrieval+answers still not great after the KB
-  expansion + TF-IDF/title-boost. Local keyword search has a ceiling at 1040 chunks. Likely next steps
-  when revisited: (a) semantic embeddings retrieval (use BytePlus Embedding API / VikingDB instead of
-  keyword), (b) better chunking (current heading-split can fragment tables/params), (c) rerank top-k.
-  Deferred by user — "work on it later".
+- **BytePlus agent RAG quality** — ✅ ADDRESSED (2026-06-21): keyword baseline now measured
+  at **recall@4 = 10/20 (50%)** on the GOLD set; semantic retriever
+  (`demos/byteplus/kb_semantic.py`, VikingDB server-side vectorize) ships as a drop-in
+  swap for the agent. A/B eval (`scripts/eval_byteplus_retrieval.py`) prints per-question
+  disagreements + summary. **Live A/B gated only on console-provisioning the new VikingDB
+  collection** (same instance-create constraint as Stage 5's lessons collection — schema
+  documented in `demos/byteplus/README.md`).
+- **A2A collector live-verify** — deferred 2026-06-21 (user, "later"). The mapping logic
+  is unit-tested offline (`tap/a2a_ingest.py`); needs a real A2A server to drive a
+  reference demo script like the other three collectors have.
 
 ## (B) Productionization (not planned features — deployment/robustness)
 Real work to run aprntc as a product, but never part of the planning-session feature roadmap:
@@ -174,7 +217,17 @@ Real work to run aprntc as a product, but never part of the planning-session fea
   - `scripts/run_scheduler.py` — runs the live nightly-distill loop (retry-wrapped).
   - +12 tests (272 total). Remaining at-scale items (not blocking): Postgres swap for SQLite +
     multi-worker (noted in DEPLOY.md); rate/cost controls.
-- **B4 — UI polish** — remaining screen edge cases, loading/error states, real-time updates.
+- **B3 follow-up — Postgres backend + multi-worker** ✅ DONE (2026-06-21).
+  `src/aprntc/trajectory/pg_store.py` `PostgresTrajectoryStore` mirrors the SQLite store's
+  public API (same schema in Postgres syntax: `BIGSERIAL`, `ON CONFLICT` upserts, `%s`
+  placeholders). `make_trajectory_store(url)` factory dispatches on URL prefix:
+  `postgresql://` → Postgres, anything else → SQLite. `AppState.from_env` reads
+  `APRNTC_DB_URL` env. New `[postgres]` extra (psycopg[binary]>=3.1). Env-gated parity tests
+  (`tests/test_pg_store.py`) — 13/13 LIVE-VERIFIED against Postgres 16 (Docker) in 0.37s.
+  `uvicorn --workers N` now safe with the Postgres backend. Recipe in DEPLOY.md.
+- **B4 — UI polish** — ✅ Substantial UI work added 2026-06-21 (Fleet, Shadow & canary,
+  Auto-promotion banner + audit log, Collector chips). Remaining screen edge cases / loading
+  states / real-time updates remain as small follow-ups.
 
 ## What's done (for reference)
 MVP stages 0–7 (signing gate, trajectory schema/store, AgentTap+SDK-wrapper collector, demo agents,

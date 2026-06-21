@@ -4,9 +4,11 @@
 > behavior, becomes a measurably better version, and — gated by a human — is **promoted**
 > to replace it. Then the cycle repeats. Codename **"Shadow."**
 
-**Status:** Feature-complete (MVP + v1 + productionization). 288 tests passing. Self-improvement
-loop verified end-to-end on live BytePlus infrastructure; runnable as a single container with
-Google sign-in and per-tenant isolation.
+**Status:** Feature-complete (MVP + v1 + productionization). **348 tests passing**
+(+13 Postgres-gated). All four collector paths (SDK wrapper / LiteLLM egress proxy /
+OpenTelemetry / MCP) live-verified end-to-end against real ModelArk + real SDKs.
+Postgres backend + multi-worker uvicorn live-verified against Postgres 16. Runnable
+as a single container with Google sign-in and per-tenant isolation.
 
 ## What it is
 
@@ -33,12 +35,13 @@ every change is attributable and reversible.
 
 | Area | Capability |
 |---|---|
-| **Loop (MVP)** | Trajectory schema + store, AgentTap, evaluation/labeling, VikingDB memory, distiller, promotion gate, lineage |
-| **Tap collectors** | SDK wrapper · LiteLLM egress proxy · OpenTelemetry ingester · MCP gateway — tap any external agent |
-| **Online** | Shadow (judge child vs parent on live traffic) · A/B canary with auto-rollback |
-| **Autonomy** | Learned fusion weights · auto-promotion policy (default-off, hard-gated) · multi-agent fleets + lesson sharing |
-| **Integration** | Playbook registry + config-fetch API (external agents pull their active playbook) |
-| **Product** | React dashboard (5 screens + 👍/👎 feedback) · Google sign-in · per-tenant isolation · Docker deploy · scheduler/retry/metrics |
+| **Loop (MVP)** | Trajectory schema + store (SQLite OR Postgres), AgentTap, evaluation/labeling, VikingDB memory, distiller, promotion gate, lineage |
+| **Tap collectors** | SDK wrapper · LiteLLM egress proxy · OpenTelemetry ingester · MCP gateway · A2A interceptor — tap any external agent (3 of 4 live-verified end-to-end with reference demo scripts) |
+| **Online** | Shadow (judge child vs parent on live traffic, **gated on A3 judge-trust**) · A/B canary with auto-rollback |
+| **Autonomy** | Learned fusion weights → **derives the trust signal that gates A4 auto-promotion + live shadow** · auto-promotion policy (default-off, hard-gated, with append-only audit log) · multi-agent fleets + lesson sharing |
+| **Integration** | Playbook registry + config-fetch API (external agents pull their active playbook) — see `docs/ONBOARDING.md` for the 5-line wiring per collector |
+| **Knowledge** | Local TF-IDF KB + **VikingDB semantic retriever** (drop-in swap; A/B eval against the GOLD set) |
+| **Product** | React dashboard (7 screens incl. Fleet + Shadow & canary + 👍/👎 feedback + auto-promote audit panel) · Google sign-in · per-tenant isolation (data + audit + memory) · Docker deploy · **Postgres backend + multi-worker uvicorn** · scheduler/retry/metrics |
 
 ## Quick start
 
@@ -64,6 +67,21 @@ Docker: `docker compose up --build` → http://localhost:8000 (see `docs/DEPLOY.
 .venv/bin/python scripts/seed_dashboard.py       # seed demo data for the dashboard
 ```
 
+### Wire an external agent through each collector path (live demos)
+```bash
+.venv/bin/python scripts/demo_external_agent.py  # LiteLLM proxy → collector=egress_proxy
+.venv/bin/python scripts/demo_otel_agent.py      # OpenTelemetry SDK → collector=otel
+.venv/bin/python scripts/demo_mcp_agent.py       # MCP SDK → collector=mcp
+```
+Each script doubles as the production-wiring example. See `docs/ONBOARDING.md`.
+
+### Multi-worker production deploy (Postgres backend)
+```bash
+APRNTC_DB_URL=postgresql://user:pwd@db:5432/aprntc \
+  .venv/bin/python -m uvicorn aprntc.web.app:app --workers 4 --port 8000
+```
+SQLite remains the zero-deps default for single-worker. See `docs/DEPLOY.md`.
+
 ## Configuration
 
 All config via `.env` (see `.env.example`). Region `ap-southeast-1`.
@@ -78,13 +96,13 @@ All config via `.env` (see `.env.example`). Region `ap-southeast-1`.
 src/aprntc/
   config.py        env/.env settings
   byteplus/        VikingDB SigV4 signer (the gate) + ModelArk client
-  trajectory/      canonical schema + SQLite store + PII scrub
+  trajectory/      canonical schema + SQLite store + Postgres store + PII scrub
   providers/       LLMProvider seam (model-agnostic)
-  tap/             AgentTap + collectors (sdk_wrapper, egress_proxy, otel, mcp)
+  tap/             AgentTap + collectors (sdk_wrapper, egress_proxy, otel, mcp, a2a)
   eval/            recused judge, outcome scorers, health, learned fusion
   memory/          MemoryStore + VikingDB REST adapter + MMR
   distill/         playbook + diff, distiller, child runtime
-  promote/         gate (Wilson CI) + lineage + auto-promotion policy
+  promote/         gate (Wilson CI) + lineage + auto-promotion policy + audit log
   online/          shadow runner + canary controller
   fleet/           multi-agent registry + cross-agent lesson sharing
   serving/         playbook registry + config-fetch API (external integration)
@@ -93,16 +111,20 @@ src/aprntc/
   ops/             scheduler, retry, self-metrics
   demos/           synthetic demos + the real BytePlus support agent
   web/             FastAPI app (API + serves the built UI)
-web/               React + Vite + Tailwind dashboard (5 screens, light/dark)
-scripts/           live demos + the scheduler runner
-docs/              DESIGN, DESIGN_AND_SOLUTION, ROADMAP, STATUS, PRODUCTION, DEPLOY, decisions/ (ADRs)
-tests/             288 tests (unit + signing oracle)
+web/               React + Vite + Tailwind dashboard (7 screens, light/dark)
+scripts/           live demos (one per collector path) + the scheduler runner + KB indexer/eval
+docs/              ONBOARDING, DESIGN, DESIGN_AND_SOLUTION, ROADMAP, STATUS, PRODUCTION, DEPLOY, decisions/ (ADRs)
+tests/             348 tests (unit + signing oracle + offline integration; +13 Postgres-gated)
 ```
 
 ## Tests
 ```bash
-.venv/bin/python -m pytest              # full suite (288)
+.venv/bin/python -m pytest              # full suite (348 + 13 Postgres-gated when env set)
 .venv/bin/python -m pytest -m oracle    # signing byte-for-byte vs the volcengine SDK
+
+# Postgres parity (needs a running Postgres — e.g. docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=test postgres:16)
+APRNTC_TEST_PG_URL="postgresql://postgres:test@localhost:5432/postgres" \
+  .venv/bin/python -m pytest tests/test_pg_store.py -v
 ```
 
 ## Documentation
