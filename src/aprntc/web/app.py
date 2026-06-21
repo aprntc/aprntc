@@ -40,6 +40,10 @@ class AppState:
     auto_policy_path: str = "auto_policy.json"
     # A6: fleet — many parent agents under one apprentice (each its own lineage).
     fleet_root: str = "fleet"
+    # A2: online shadow runner + canary controller. Wired at deploy-time against
+    # real traffic — None in dev mode. The dashboard surfaces these read-only.
+    shadow: Any | None = None      # ShadowRunner
+    canary: Any | None = None      # CanaryController
     store: TrajectoryStore | None = None
     # optional: a memory retriever (callable(query, k) -> list[dict]) for the lessons screen
     memory_search: Any | None = None
@@ -699,6 +703,57 @@ def create_app(state: AppState | None = None) -> FastAPI:
             tags=list(body.get("tags") or []),
         ))
         return ref.to_dict()
+
+    # -- A2: online shadow + canary read endpoints ---------------------------
+    @app.get("/api/online/shadow")
+    def get_shadow() -> dict[str, Any]:
+        """Live shadow stats — child-vs-parent win-rate + Wilson CI on real traffic.
+
+        Returns ``available: false`` when no ShadowRunner is wired (the dev default).
+        In production the runner accumulates as ``observe()`` is called on each
+        live request; this endpoint just exposes the running tally read-only.
+        """
+        runner = state.shadow
+        if runner is None:
+            return {"available": False}
+        s = runner.stats
+        lo, hi = s.ci()
+        return {
+            "available": True,
+            "n": s.n,
+            "wins": s.wins,
+            "losses": s.losses,
+            "ties": s.ties,
+            "errors": s.errors,
+            "win_rate": s.win_rate,
+            "loss_rate": s.loss_rate,
+            "ci_low": lo,
+            "ci_high": hi,
+            "ready_to_promote": runner.ready_to_promote(),
+        }
+
+    @app.get("/api/online/canary")
+    def get_canary() -> dict[str, Any]:
+        """Current canary state — status, traffic fraction, arm rewards.
+
+        ``available: false`` when no CanaryController is wired. When wired, the
+        controller progresses through stages (5%→25%→50%→100%) as ``record()``
+        is called and auto-rolls back if the child arm degrades.
+        """
+        cc = state.canary
+        if cc is None:
+            return {"available": False}
+        # ._child / ._parent are private accumulators; expose just their means + n.
+        child = getattr(cc, "_child")
+        parent = getattr(cc, "_parent")
+        return {
+            "available": True,
+            "status": cc.status.value,
+            "fraction": cc.fraction,
+            "stages": list(cc.stages),
+            "child": {"n": child.n, "mean_reward": child.mean},
+            "parent": {"n": parent.n, "mean_reward": parent.mean},
+        }
 
     # -- B0/B2: playbook serving — tenant-isolated when a resolver is configured --
     def _registry(request: "Request"):

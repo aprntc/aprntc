@@ -19,6 +19,7 @@ import TrajectoriesScreen from "./screens/Trajectories";
 import LessonsScreen from "./screens/Lessons";
 import TryAgentScreen from "./screens/TryAgent";
 import FleetScreen from "./screens/Fleet";
+import ShadowScreen from "./screens/Shadow";
 import Login from "./screens/Login";
 
 const NAV = [
@@ -28,6 +29,7 @@ const NAV = [
   { to: "/trajectories", label: "Trajectories", icon: IconTrace },
   { to: "/lessons", label: "Lessons", icon: IconBook },
   { to: "/fleet", label: "Fleet", icon: IconUsers },
+  { to: "/shadow", label: "Shadow & canary", icon: IconBolt },
 ];
 
 function Sidebar({ me }: { me: AuthMe | null }) {
@@ -122,6 +124,7 @@ export default function App() {
             <Route path="/trajectories" element={<TrajectoriesScreen />} />
             <Route path="/lessons" element={<LessonsScreen />} />
             <Route path="/fleet" element={<FleetScreen />} />
+            <Route path="/shadow" element={<ShadowScreen />} />
           </Routes>
         </div>
       </main>

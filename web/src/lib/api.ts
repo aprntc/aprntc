@@ -134,9 +134,36 @@ export const api = {
   },
   registerAgent: (agent: { agent_id: string; domain?: string; name?: string; tags?: string[] }) =>
     post<FleetAgent>("/api/fleet/register", agent),
+  shadow: () => get<ShadowStats>("/api/online/shadow"),
+  canary: () => get<CanaryState>("/api/online/canary"),
   authConfig: () => get<{ enabled: boolean; provider: string | null }>("/api/auth/config"),
   me: () => get<AuthMe>("/api/auth/me"),
   logout: () => post<{ ok: boolean }>("/api/auth/logout"),
+};
+
+export type ShadowStats = {
+  available: boolean;
+  n?: number;
+  wins?: number;
+  losses?: number;
+  ties?: number;
+  errors?: number;
+  win_rate?: number;
+  loss_rate?: number;
+  ci_low?: number;
+  ci_high?: number;
+  ready_to_promote?: boolean;
+};
+
+export type CanaryArm = { n: number; mean_reward: number };
+
+export type CanaryState = {
+  available: boolean;
+  status?: "running" | "promoted" | "rolled_back";
+  fraction?: number;
+  stages?: number[];
+  child?: CanaryArm;
+  parent?: CanaryArm;
 };
 
 export type FleetAgent = {

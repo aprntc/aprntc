@@ -230,6 +230,48 @@ def test_fleet_filter_by_domain(tmp_path):
     assert [a["agent_id"] for a in only_rag] == ["a2"]
 
 
+def test_online_endpoints_unavailable_by_default(tmp_path):
+    """A2: /api/online/shadow|canary return available:false when not wired (the dev default)."""
+    c = _client(tmp_path)
+    assert c.get("/api/online/shadow").json() == {"available": False}
+    assert c.get("/api/online/canary").json() == {"available": False}
+
+
+def test_online_shadow_returns_stats_when_wired(tmp_path):
+    """A2: ShadowRunner.stats surfaces through the endpoint with Wilson CI."""
+    from aprntc.online.shadow import ShadowStats
+
+    class _FakeRunner:
+        stats = ShadowStats(n=40, wins=24.0, losses=12.0, ties=4, errors=1)
+        def ready_to_promote(self, **_):
+            return True
+
+    state = AppState(shadow=_FakeRunner())
+    r = TestClient(create_app(state)).get("/api/online/shadow").json()
+    assert r["available"] is True
+    assert r["n"] == 40 and r["wins"] == 24.0
+    assert r["win_rate"] == pytest.approx(0.6)
+    # Wilson CI is reasonable for n=40 wins=24
+    assert 0.0 <= r["ci_low"] <= r["win_rate"] <= r["ci_high"] <= 1.0
+    assert r["ready_to_promote"] is True
+
+
+def test_online_canary_returns_state_when_wired(tmp_path):
+    """A2: CanaryController state (status, fraction, arms) surfaces through the endpoint."""
+    from aprntc.online.canary import CanaryController
+
+    cc = CanaryController()
+    cc.record("parent", 0.7)
+    cc.record("parent", 0.8)
+    cc.record("child", 0.9)
+    state = AppState(canary=cc)
+    r = TestClient(create_app(state)).get("/api/online/canary").json()
+    assert r["available"] is True
+    assert r["status"] == "running"
+    assert r["fraction"] == pytest.approx(0.05)  # first stage
+    assert r["child"]["n"] == 1 and r["parent"]["n"] == 2
+
+
 def test_review_no_bundle_no_auto(tmp_path):
     """A4: empty bundle (no candidate) → auto is null (nothing to decide)."""
     c = _client(tmp_path)
