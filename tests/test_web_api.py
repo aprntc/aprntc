@@ -134,6 +134,60 @@ def test_get_missing_trajectory_404(tmp_path, store):
     assert r.status_code == 404
 
 
+def test_ingest_trajectory_happy_path(tmp_path, store):
+    """POST /api/trajectories accepts an Episode dict, returns the id."""
+    ep = Episode(task_input="who am i?", collector=Collector.EGRESS_PROXY,
+                 final_output="you are an external agent", turns=[Turn(turn_index=0)])
+    c = _client(tmp_path, store=store)
+    r = c.post("/api/trajectories", json=ep.to_dict())
+    assert r.status_code == 200
+    data = r.json()
+    assert data["episode_id"] == ep.episode_id
+    # Round-trips: fetching it back via GET returns the same task.
+    got = c.get(f"/api/trajectories/{ep.episode_id}").json()
+    assert got["task_input"] == "who am i?"
+    assert got["collector"] == "egress_proxy"
+
+
+def test_ingest_trajectory_rejects_bad_shape(tmp_path, store):
+    c = _client(tmp_path, store=store)
+    r = c.post("/api/trajectories", json={"not_an_episode": True})
+    assert r.status_code == 400
+    assert "invalid Episode shape" in r.json()["detail"]
+
+
+def test_ingest_trajectory_503_without_store(tmp_path):
+    c = _client(tmp_path)  # no store
+    r = c.post("/api/trajectories", json={})
+    assert r.status_code == 503
+
+
+def test_ingest_trajectory_tenant_isolated(tmp_path):
+    """In tenant mode the Episode lands in the CALLING tenant's store, not others."""
+    from aprntc.tenancy import TenantResolver, TenantStore
+    ts = TenantStore(tmp_path / "t.json")
+    _, ka = ts.create_tenant("tenant-a")
+    _, kb = ts.create_tenant("tenant-b")
+    resolver = TenantResolver(ts, data_root=str(tmp_path / "data"))
+    app = create_app(AppState(tenant_resolver=resolver))
+    c = TestClient(app)
+
+    ep = Episode(task_input="A's task", collector=Collector.EGRESS_PROXY,
+                 final_output="ok", turns=[Turn(turn_index=0)])
+    # Missing key → 401.
+    assert c.post("/api/trajectories", json=ep.to_dict()).status_code == 401
+    # Tenant A posts; lands in A's store.
+    r = c.post("/api/trajectories", json=ep.to_dict(),
+               headers={"X-API-Key": ka})
+    assert r.status_code == 200
+    # Tenant B's store is empty.
+    lst_b = c.get("/api/trajectories", headers={"X-API-Key": kb}).json()
+    assert lst_b["count"] == 0
+    # Tenant A sees the ingested episode.
+    lst_a = c.get("/api/trajectories", headers={"X-API-Key": ka}).json()
+    assert lst_a["count"] == 1
+
+
 def test_auto_promotion_policy_default_off(tmp_path):
     """A4: GET /api/policy/auto-promote returns the default-off conservative policy."""
     c = _client(tmp_path)

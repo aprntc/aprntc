@@ -218,6 +218,8 @@ dashboard via Google OAuth).
 
 ## Where to look next
 
+- **[EXAMPLE_DEPLOYMENT.md](EXAMPLE_DEPLOYMENT.md)** — end-to-end walkthrough using
+  the ShopMate e-commerce agent (provision → register → run → distill → promote → rollback)
 - [DEPLOY.md](DEPLOY.md) — single-container deploy, Postgres + multi-worker setup
 - [PRODUCTION.md](PRODUCTION.md) — the "aprntc sits beside, not in front" mental model
 - [`tap/README.md`](../src/aprntc/tap/README.md) — collector internals + fidelity table

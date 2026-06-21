@@ -634,6 +634,35 @@ def create_app(state: AppState | None = None) -> FastAPI:
         data["fused_reward"] = {"reward": fused[0], "confidence": fused[1]} if fused else None
         return data
 
+    @app.post("/api/trajectories")
+    def ingest_trajectory(body: dict[str, Any], request: Request) -> dict[str, Any]:
+        """Ingest one Episode from an external agent over HTTP (no DB sharing).
+
+        Body = the JSON form of :class:`aprntc.trajectory.schema.Episode`
+        (``Episode.to_dict()``). Tenant-scoped via the same auth as the read
+        endpoints — an external agent in multi-tenant mode authenticates with
+        its X-API-Key / Bearer and the Episode lands in that tenant's store.
+
+        This is the production-recommended path for external agents: the agent
+        only talks HTTP, no DB credentials needed. Returns ``{episode_id,
+        fused_reward}`` so the agent can echo the captured id back to the user.
+        """
+        from aprntc.trajectory import Episode
+        if state.tenant_resolver is None and state.store is None:
+            raise HTTPException(status_code=503, detail="no store configured")
+        try:
+            episode = Episode.from_dict(body)
+        except (KeyError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"invalid Episode shape: {e}")
+        store = _resolve_store(request)
+        # Trust the caller's pii_status flag if SCRUBBED; otherwise scrub server-side.
+        eid = store.put_episode(episode)
+        fused = store.fused_reward(eid)
+        return {
+            "episode_id": eid,
+            "fused_reward": fused[0] if fused else None,
+        }
+
     # -- lessons (experience memory) ------------------------------------
     @app.get("/api/lessons")
     def search_lessons(request: Request, q: str = "", k: int = 10) -> dict[str, Any]:

@@ -1,0 +1,59 @@
+{
+  "products": [
+    {
+      "sku": "HDPHN-101",
+      "name": "AuraSound Pro Wireless Headphones",
+      "category": "audio",
+      "price_usd": 199.00,
+      "in_stock": true,
+      "stock_count": 84,
+      "description": "Over-ear active-noise-canceling headphones with 40-hour battery and multipoint Bluetooth 5.3.",
+      "warranty_months": 24,
+      "return_window_days": 30
+    },
+    {
+      "sku": "WCHGR-202",
+      "name": "FlexCharge 15W Wireless Charging Pad",
+      "category": "accessory",
+      "price_usd": 39.99,
+      "in_stock": true,
+      "stock_count": 312,
+      "description": "Qi-compatible wireless charging pad. 15W fast charge for compatible phones, USB-C input.",
+      "warranty_months": 12,
+      "return_window_days": 30
+    },
+    {
+      "sku": "WATCH-303",
+      "name": "Pulse Fit Smartwatch (Gen 3)",
+      "category": "wearable",
+      "price_usd": 249.00,
+      "in_stock": false,
+      "stock_count": 0,
+      "description": "GPS smartwatch with continuous heart-rate and SpO2 monitoring, 7-day battery, 50m water-resistant.",
+      "warranty_months": 12,
+      "return_window_days": 30
+    },
+    {
+      "sku": "SPKR-404",
+      "name": "WaveBox Portable Speaker",
+      "category": "audio",
+      "price_usd": 89.50,
+      "in_stock": true,
+      "stock_count": 47,
+      "description": "Splash-resistant portable Bluetooth speaker with 16-hour playback and stereo pairing.",
+      "warranty_months": 12,
+      "return_window_days": 14
+    },
+    {
+      "sku": "KEYBD-505",
+      "name": "Lumen 75 Mechanical Keyboard",
+      "category": "computing",
+      "price_usd": 159.00,
+      "in_stock": true,
+      "stock_count": 18,
+      "description": "75% layout mechanical keyboard, hot-swap sockets, RGB backlight, USB-C + Bluetooth.",
+      "warranty_months": 24,
+      "return_window_days": 30
+    }
+  ]
+}

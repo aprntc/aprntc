@@ -1,0 +1,76 @@
+{
+  "orders": [
+    {
+      "order_id": "A1001",
+      "customer_id": "C-101",
+      "sku": "HDPHN-101",
+      "qty": 1,
+      "total_usd": 199.00,
+      "status": "delivered",
+      "placed_at": "2026-05-30",
+      "delivered_at": "2026-06-03",
+      "tracking": "FX-1192-330812",
+      "carrier": "FedEx"
+    },
+    {
+      "order_id": "A1002",
+      "customer_id": "C-102",
+      "sku": "WCHGR-202",
+      "qty": 2,
+      "total_usd": 79.98,
+      "status": "in_transit",
+      "placed_at": "2026-06-18",
+      "delivered_at": null,
+      "tracking": "UPS-9930-AA-77",
+      "carrier": "UPS"
+    },
+    {
+      "order_id": "A1003",
+      "customer_id": "C-103",
+      "sku": "SPKR-404",
+      "qty": 1,
+      "total_usd": 89.50,
+      "status": "delivered",
+      "placed_at": "2026-04-15",
+      "delivered_at": "2026-04-20",
+      "tracking": "DHL-2241-XX-09",
+      "carrier": "DHL"
+    },
+    {
+      "order_id": "A1004",
+      "customer_id": "C-101",
+      "sku": "KEYBD-505",
+      "qty": 1,
+      "total_usd": 159.00,
+      "status": "processing",
+      "placed_at": "2026-06-20",
+      "delivered_at": null,
+      "tracking": null,
+      "carrier": null
+    },
+    {
+      "order_id": "A1005",
+      "customer_id": "C-104",
+      "sku": "HDPHN-101",
+      "qty": 1,
+      "total_usd": 199.00,
+      "status": "delivered",
+      "placed_at": "2026-06-01",
+      "delivered_at": "2026-06-06",
+      "tracking": "FX-1192-339991",
+      "carrier": "FedEx"
+    },
+    {
+      "order_id": "A1006",
+      "customer_id": "C-105",
+      "sku": "WATCH-303",
+      "qty": 1,
+      "total_usd": 249.00,
+      "status": "cancelled",
+      "placed_at": "2026-06-10",
+      "delivered_at": null,
+      "tracking": null,
+      "carrier": null
+    }
+  ]
+}

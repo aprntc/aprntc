@@ -129,6 +129,8 @@ APRNTC_TEST_PG_URL="postgresql://postgres:test@localhost:5432/postgres" \
 
 ## Documentation
 - `docs/ONBOARDING.md` — **5-min customer onboarding**: pick a collector (LiteLLM / OTel / MCP / SDK) + wire it in (5 lines)
+- `docs/EXAMPLE_DEPLOYMENT.md` — **end-to-end walkthrough** (ShopMate e-commerce agent + aprntc) — provision → register → run → distill → promote
+- `examples/ecommerce-agent/` — runnable Streamlit demo of an external customer agent talking to aprntc over HTTP
 - `docs/DESIGN_AND_SOLUTION.md` — the full design & solution write-up (the source of truth for *what* + *why*)
 - `docs/PRODUCTION.md` — how aprntc connects to a real external agent in production
 - `docs/DEPLOY.md` — single-container deploy, Postgres + multi-worker setup

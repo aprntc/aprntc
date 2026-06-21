@@ -1,0 +1,9 @@
+{
+  "customers": [
+    {"customer_id": "C-101", "name": "Aarav Mehta",   "email": "aarav.m@example.com",   "tier": "gold",   "country": "SG"},
+    {"customer_id": "C-102", "name": "Priya Iyer",    "email": "priya.iyer@example.com","tier": "silver", "country": "SG"},
+    {"customer_id": "C-103", "name": "Marcus Tan",    "email": "marcus.tan@example.com","tier": "silver", "country": "SG"},
+    {"customer_id": "C-104", "name": "Hana Yamamoto", "email": "hana.y@example.com",    "tier": "bronze", "country": "JP"},
+    {"customer_id": "C-105", "name": "Liu Wei",       "email": "liu.wei@example.com",   "tier": "gold",   "country": "CN"}
+  ]
+}

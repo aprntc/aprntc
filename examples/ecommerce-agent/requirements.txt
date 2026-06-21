@@ -1,0 +1,8 @@
+# ShopMate — external e-commerce agent (run alongside aprntc)
+#
+# The agent itself imports aprntc.trajectory.schema only to build the Episode
+# payload it POSTs over HTTP. Everything else is plain OpenAI + Streamlit.
+# Install from the parent .venv:
+#   .venv/bin/pip install -r examples/ecommerce-agent/requirements.txt
+streamlit>=1.30
+openai>=1.0
