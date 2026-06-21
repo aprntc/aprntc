@@ -2,7 +2,7 @@
 
 import pytest
 
-from aprntc.eval.fusion import FusionWeights, learn_weights
+from aprntc.eval.fusion import FusionWeights, compute_trust, learn_weights
 from aprntc.trajectory import (
     Collector,
     Episode,
@@ -106,3 +106,51 @@ def test_store_fused_reward_default_unchanged_without_weights(store):
     # default path still works (no weights arg)
     r, c = store.fused_reward(eid)
     assert 0.0 <= r <= 1.0 and c == pytest.approx(1.0)
+
+
+# ─── compute_trust (A3 → A4 trust signal) ────────────────────────────────────
+
+def test_compute_trust_returns_none_below_min_n():
+    """Cold-start: not enough joint judge+anchor episodes -> trust is None."""
+    eps = [_labels((LabelSource.OUTCOME, 1.0), (LabelSource.JUDGE, 1.0))] * 3
+    tr = compute_trust(eps, min_n=10)
+    assert tr.value is None and tr.n == 3 and tr.min_n == 10
+
+
+def test_compute_trust_high_when_judge_tracks_anchor():
+    """Judge whose scores match the outcome → high trust (~1.0)."""
+    eps = []
+    for _ in range(15):
+        eps.append(_labels((LabelSource.OUTCOME, 0.9), (LabelSource.JUDGE, 0.9)))
+    tr = compute_trust(eps, min_n=10)
+    assert tr.value == pytest.approx(1.0)
+    assert tr.n == 15
+
+
+def test_compute_trust_low_when_judge_disagrees_with_anchor():
+    """Judge that disagrees flat-out → low trust."""
+    eps = []
+    for _ in range(15):
+        eps.append(_labels((LabelSource.OUTCOME, 1.0), (LabelSource.JUDGE, 0.0)))
+    tr = compute_trust(eps, min_n=10)
+    assert tr.value == pytest.approx(0.0)
+
+
+def test_compute_trust_uses_user_explicit_as_anchor_when_no_outcome():
+    """When OUTCOME is missing, USER_EXPLICIT is the next-best anchor."""
+    eps = []
+    for _ in range(12):
+        eps.append(_labels((LabelSource.USER_EXPLICIT, 1.0), (LabelSource.JUDGE, 1.0)))
+    tr = compute_trust(eps, min_n=10)
+    assert tr.value == pytest.approx(1.0) and tr.n == 12
+
+
+def test_compute_trust_skips_episodes_without_anchor_or_judge():
+    """Episodes lacking either side of the pair don't count toward n."""
+    eps = [
+        _labels((LabelSource.JUDGE, 1.0)),                                    # judge only — skip
+        _labels((LabelSource.OUTCOME, 1.0)),                                  # anchor only — skip
+        _labels((LabelSource.OUTCOME, 1.0), (LabelSource.JUDGE, 1.0)),       # pair — count
+    ] * 5
+    tr = compute_trust(eps, min_n=4)
+    assert tr.n == 5 and tr.value == pytest.approx(1.0)

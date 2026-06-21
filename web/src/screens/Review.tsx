@@ -178,6 +178,27 @@ const hasDiff = (d: { add_directives?: string[]; add_exemplars?: string[]; add_w
   !!(d.add_directives?.length || d.add_exemplars?.length || d.add_watch_out?.length);
 
 
+function TrustLine({ trust }: { trust: NonNullable<AutoDecision["trust"]> }) {
+  // A3 → A4 signal: judge ↔ anchor agreement from the store's label history.
+  // Until min_n is met, the policy treats trust as missing (HUMAN_REVIEW stays on).
+  if (trust.value == null) {
+    const threshold = trust.min_n ? ` (need ${trust.min_n})` : "";
+    return (
+      <div className="mt-2 text-[11px] text-faint">
+        Judge trust: insufficient data — {trust.n} joint judge+anchor episodes{threshold}.
+      </div>
+    );
+  }
+  const tone = trust.value >= 0.8 ? "text-success" : trust.value >= 0.6 ? "text-warning" : "text-danger";
+  return (
+    <div className="mt-2 text-[11px]">
+      <span className="text-faint">Judge trust: </span>
+      <span className={tone}>{pct(trust.value)}</span>
+      <span className="text-faint"> (n={trust.n} joint judge+anchor episodes)</span>
+    </div>
+  );
+}
+
 function AutoPromotion({ auto, onPolicyChange }: { auto: AutoDecision; onPolicyChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const isAuto = auto.action === "auto_promote";
@@ -226,6 +247,7 @@ function AutoPromotion({ auto, onPolicyChange }: { auto: AutoDecision; onPolicyC
               All guardrails clear — auto-promotion would fire on this candidate.
             </div>
           )}
+          {auto.trust && <TrustLine trust={auto.trust} />}
         </div>
         <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
           <input

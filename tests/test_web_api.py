@@ -272,6 +272,50 @@ def test_online_canary_returns_state_when_wired(tmp_path):
     assert r["child"]["n"] == 1 and r["parent"]["n"] == 2
 
 
+def test_review_auto_decision_includes_trust_field(tmp_path, store):
+    """A3 → A4: /api/review's auto.trust reflects the store's judge↔anchor history.
+
+    With NO judge+anchor data the trust value is None (insufficient); auto stays
+    blocked on "no trust signal". After seeding 10 episodes where the judge matches
+    the outcome, trust climbs to ~1.0 and the "no trust signal" reason disappears
+    (it's replaced with the actual value).
+    """
+    bundle = {
+        "candidate_playbook_hash": "h",
+        "gate": {
+            "n": 30, "wins": 24, "losses": 1, "ties": 5,
+            "win_rate": 0.80, "ci_low": 0.62, "ci_high": 0.91,
+            "loss_rate": 0.03,
+            "regression_failures": 0, "safety_failures": 0,
+            "win_rate_ok": True, "ci_ok": True, "loss_ok": True,
+            "regression_ok": True, "safety_ok": True,
+        },
+        "diff": {"add_directives": ["always cite"], "add_exemplars": [], "add_watch_out": []},
+    }
+
+    # Empty store: trust is reported but value=None (insufficient).
+    c = _client(tmp_path, store=store, bundle=bundle)
+    r = c.get("/api/review").json()
+    auto = r["auto"]
+    assert auto["trust"]["value"] is None
+    assert auto["trust"]["n"] == 0
+    assert any("no trust signal" in reason for reason in auto["reasons"])
+
+    # Seed 10 episodes with matching JUDGE+OUTCOME labels → trust ≈ 1.0.
+    for i in range(10):
+        ep = Episode(task_input=f"q{i}", collector=Collector.SDK_WRAPPER,
+                     final_output="ok", turns=[Turn(turn_index=0)])
+        eid = store.put_episode(ep, scrub=False)
+        store.attach_label(eid, Label(source=LabelSource.OUTCOME, score=1.0, confidence=1.0))
+        store.attach_label(eid, Label(source=LabelSource.JUDGE, score=1.0, confidence=0.9))
+    r2 = c.get("/api/review").json()
+    auto2 = r2["auto"]
+    assert auto2["trust"]["value"] == pytest.approx(1.0)
+    assert auto2["trust"]["n"] == 10
+    # The "no trust signal" reason is gone now — the threshold guardrail clears.
+    assert not any("no trust signal" in reason for reason in auto2["reasons"])
+
+
 def test_review_no_bundle_no_auto(tmp_path):
     """A4: empty bundle (no candidate) → auto is null (nothing to decide)."""
     c = _client(tmp_path)

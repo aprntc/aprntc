@@ -433,6 +433,20 @@ def create_app(state: AppState | None = None) -> FastAPI:
         ctx = _resolve_ctx(request)
         return Fleet(ctx.fleet_root if ctx is not None else state.fleet_root)
 
+    def _compute_store_trust(request: "Request"):
+        """Compute the A3-derived trust signal from the current store's history.
+
+        Returns a :class:`TrustReport` (with ``value=None`` until min_n is reached)
+        or ``None`` when no store is available (dev mode without one configured).
+        """
+        from aprntc.eval.fusion import compute_trust
+        try:
+            store = _resolve_store(request)
+        except HTTPException:
+            return None
+        all_labels = [store.labels_for(e.episode_id) for e in store.query()]
+        return compute_trust(all_labels)
+
     # -- health ----------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -469,12 +483,25 @@ def create_app(state: AppState | None = None) -> FastAPI:
         auto: dict[str, Any] | None = None
         policy = _load_auto_policy(_resolve_auto_policy_path(request))
         if bundle:
-            decision = policy.decide(_gate_from_dict(gate), _diff_from_dict(bundle.get("diff", {})))
+            # A3 → A4: derive a real trust signal from the store's accumulated
+            # judge ↔ anchor agreement. When there's not enough joint data yet
+            # the trust is None and the policy stays conservatively HUMAN_REVIEW.
+            trust_report = _compute_store_trust(request)
+            decision = policy.decide(
+                _gate_from_dict(gate),
+                _diff_from_dict(bundle.get("diff", {})),
+                trust=trust_report.value if trust_report else None,
+            )
             auto = {
                 "action": decision.action.value,
                 "reasons": list(decision.reasons),
                 "summary": decision.summary(),
                 "policy_enabled": policy.enabled,
+                "trust": {
+                    "value": trust_report.value if trust_report else None,
+                    "n": trust_report.n if trust_report else 0,
+                    "min_n": trust_report.min_n if trust_report else None,
+                } if trust_report else None,
             }
 
         return {

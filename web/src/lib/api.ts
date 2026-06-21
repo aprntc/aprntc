@@ -28,6 +28,11 @@ export type AutoDecision = {
   reasons: string[];
   summary: string;
   policy_enabled: boolean;
+  trust?: {
+    value: number | null;     // null when insufficient data
+    n: number;                // joint judge+anchor episodes
+    min_n: number | null;     // threshold to start trusting
+  } | null;
 };
 
 export type AutoPolicy = {

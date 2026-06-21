@@ -114,3 +114,50 @@ def learn_weights(
         report[src] = sa
 
     return FusionWeights(weights=weights, report=report)
+
+
+@dataclass
+class TrustReport:
+    """Trust signal for the A4 auto-promotion gate, derived from A3 fusion data.
+
+    The single scalar ``value`` (0..1) is how well the JUDGE has historically agreed
+    with anchors (outcome > human > explicit) on the same episodes — i.e. has the
+    judge proven itself reliable enough to auto-promote on. ``None`` when there
+    isn't enough joint data yet (cold-start), in which case the auto-policy stays
+    conservatively in HUMAN_REVIEW.
+    """
+
+    value: float | None
+    n: int                     # number of episodes with both a judge label AND an anchor
+    min_n: int                 # threshold used (n < min_n → value is None)
+
+
+def compute_trust(
+    episodes_labels: list[list[Label]],
+    *,
+    min_n: int = 10,
+) -> TrustReport:
+    """Derive the auto-promote trust scalar from the judge ↔ anchor agreement.
+
+    Same pairing logic as :func:`learn_weights` (an anchor must be present on the
+    same episode as the judge label), but reports just the judge agreement and the
+    sample size so the auto-policy can decide "trustworthy enough to auto-fire".
+
+    The 10-sample default mirrors the gate's notion of "powered N" — fewer than
+    that and a single bad agreement could swing the score wildly. Adjust higher
+    in production once enough joint data accumulates.
+    """
+    n = 0
+    agree = 0.0
+    for labels in episodes_labels:
+        anchor = _anchor_score(labels)
+        if anchor is None:
+            continue
+        judge = next((l for l in labels if l.source is LabelSource.JUDGE), None)
+        if judge is None:
+            continue
+        n += 1
+        agree += 1.0 - abs(judge.score - anchor)
+    if n < min_n:
+        return TrustReport(value=None, n=n, min_n=min_n)
+    return TrustReport(value=agree / n, n=n, min_n=min_n)
