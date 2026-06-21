@@ -40,6 +40,10 @@ review_bundle.json
 lineage*.json
 playbooks.json
 fleet/
+orchestrator_state.json
+aprntc_memory.db
+auto_policy.json
+auto_promote_audit.jsonl
 
 # ─── OS / editor ────────────────────────────────────────────────────────────
 .DS_Store
@@ -49,3 +53,6 @@ fleet/
 tenant_data/
 tenants.json
 users.json
+
+# ─── Research / paper drafts (kept local, never pushed) ─────────────────────
+docs/research/

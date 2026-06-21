@@ -242,6 +242,7 @@ class ShopMate:
             collector=Collector.EGRESS_PROXY,  # ingested over the HTTP boundary
             final_output=answer,
             turns=[turn],
+            agent_id=AGENT_ID,                 # ties this trajectory to the agent's improvement loop
             generation_id="g0-shopmate",
             model_id=self.model,
             latency_ms=(time.time() - ep_start) * 1000,

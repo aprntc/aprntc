@@ -311,6 +311,7 @@ class Episode:
     schema_version: int = SCHEMA_VERSION
     trace_id: str | None = None              # correlation id (best-effort)
     generation_id: str | None = None
+    agent_id: str | None = None              # which parent agent produced this (for the improvement loop)
     agent_artifact_hash: str | None = None
     ts_start: str = field(default_factory=utc_now_iso)
     ts_end: str | None = None
@@ -354,6 +355,7 @@ class Episode:
                 "collector": self.collector.value,
                 "trace_id": self.trace_id,
                 "generation_id": self.generation_id,
+                "agent_id": self.agent_id,
                 "agent_artifact_hash": self.agent_artifact_hash,
                 "ts_start": self.ts_start,
                 "ts_end": self.ts_end,
@@ -384,6 +386,7 @@ class Episode:
             schema_version=d.get("schema_version", SCHEMA_VERSION),
             trace_id=d.get("trace_id"),
             generation_id=d.get("generation_id"),
+            agent_id=d.get("agent_id"),
             agent_artifact_hash=d.get("agent_artifact_hash"),
             ts_start=d.get("ts_start", utc_now_iso()),
             ts_end=d.get("ts_end"),

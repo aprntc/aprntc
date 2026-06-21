@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { api, AutoDecision, AuditRecord } from "../lib/api";
+import { useEffect, useState } from "react";
+import { api, AutoDecision, AuditRecord, FleetAgent, ImproveStatus, ImproveReport } from "../lib/api";
 import { useAsync, pct } from "../lib/hooks";
 import { Badge, Button, Card, Empty, Metric, PageHeader, Spinner } from "../components/ui";
 import {
+  IconBolt,
   IconCheck,
   IconGate,
   IconPlus,
@@ -20,13 +21,23 @@ export default function Review() {
   if (loading) return <Spinner />;
   if (error)
     return <Empty icon={<IconGate className="h-8 w-8" />} title="Couldn't reach the API" sub={error} />;
+
+  // The improvement panel is shown even with no candidate — the operator triggers
+  // the autonomous loop from here, which generates the candidate.
   if (!data?.available)
     return (
-      <Empty
-        icon={<IconGate className="h-8 w-8" />}
-        title="No candidate to review"
-        sub="Run an evaluation (scripts/demo_promotion.py) to produce a review bundle."
-      />
+      <div>
+        <PageHeader
+          title="Promotion review"
+          sub="The autonomous loop distills + evaluates candidates. You approve the promotion."
+        />
+        <ImprovementPanel onProduced={refetch} />
+        <Empty
+          icon={<IconGate className="h-8 w-8" />}
+          title="No candidate yet"
+          sub="Run the improvement loop above (or let the scheduler run it) to generate one from accumulated trajectories."
+        />
+      </div>
     );
 
   const g = data.gate;
@@ -76,6 +87,8 @@ export default function Review() {
           )
         }
       />
+
+      <ImprovementPanel onProduced={refetch} />
 
       {data.candidate_playbook_hash && (
         <div className="mb-5 text-sm text-muted">
@@ -305,6 +318,129 @@ function AutoPromotion({ auto, onPolicyChange }: { auto: AutoDecision; onPolicyC
           />
           <span>Enable auto-promotion</span>
         </label>
+      </div>
+    </Card>
+  );
+}
+
+
+// ─── Autonomous improvement loop panel ───────────────────────────────────────
+
+function ImprovementPanel({ onProduced }: { onProduced: () => void }) {
+  const fleet = useAsync(() => api.fleet(), []);
+  const [agentId, setAgentId] = useState<string>("");
+  const [status, setStatus] = useState<ImproveStatus | null>(null);
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState<ImproveReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const agents: FleetAgent[] = fleet.data?.agents ?? [];
+
+  // Default to the first registered agent.
+  useEffect(() => {
+    if (!agentId && agents.length > 0) setAgentId(agents[0].agent_id);
+  }, [agents, agentId]);
+
+  // Load status whenever the selected agent changes.
+  useEffect(() => {
+    if (!agentId) return;
+    let alive = true;
+    api.improveStatus(agentId).then((s) => { if (alive) setStatus(s); }).catch(() => {});
+    return () => { alive = false; };
+  }, [agentId, running]);
+
+  const run = async () => {
+    if (!agentId) return;
+    setRunning(true);
+    setErr(null);
+    setReport(null);
+    try {
+      const r = await api.improveNow(agentId);
+      setReport(r);
+      if (r.bundle_written) onProduced(); // refresh the review bundle
+    } catch (e: any) {
+      setErr(e?.message ?? "failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (fleet.loading) return null;
+
+  return (
+    <Card className="mb-6 border-l-4 border-l-accent bg-accent/5 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-sm font-medium text-fg">
+            <IconBolt className="h-4 w-4 text-accent" />
+            Autonomous improvement loop
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            Distills lessons from accumulated trajectories → builds a candidate playbook →
+            evaluates it (replay gate) → produces a review below. Runs on a schedule; trigger
+            it manually here. Promotion stays a human decision.
+          </p>
+
+          {agents.length === 0 ? (
+            <div className="mt-2 text-xs text-faint">
+              No agents registered yet. An agent appears here automatically the first time it
+              fetches its playbook from aprntc.
+            </div>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                className="rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs text-fg"
+              >
+                {agents.map((a) => (
+                  <option key={a.agent_id} value={a.agent_id}>{a.name || a.agent_id}</option>
+                ))}
+              </select>
+              {status?.available && (
+                <span className="text-[11px] text-faint">
+                  {status.n_trajectories} trajectories · {status.n_new_since_last_run} new since last run
+                  {status.last_run_at ? ` · last run ${new Date(status.last_run_at).toLocaleString()}` : " · never run"}
+                </span>
+              )}
+            </div>
+          )}
+
+          {report && (
+            <div className="mt-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs">
+              {report.ran ? (
+                <>
+                  <span className="text-success">Ran.</span>{" "}
+                  mined {report.n_lessons} lessons → candidate G{report.candidate_generation}
+                  {report.win_rate != null && <> · replay win-rate {pct(report.win_rate)}</>}
+                  {report.gate_passed != null && (
+                    <Badge tone={report.gate_passed ? "success" : "warning"}>
+                      {report.gate_passed ? "passes bar" : "below bar"}
+                    </Badge>
+                  )}
+                  {report.auto_promoted && <Badge tone="accent">auto-promoted</Badge>}
+                  {report.bundle_written && !report.auto_promoted && (
+                    <span className="text-muted"> · candidate ready below for your review</span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted">{report.reason}</span>
+              )}
+            </div>
+          )}
+          {err && <div className="mt-2 text-xs text-danger">{err}</div>}
+          {status && !status.available && (
+            <div className="mt-2 text-xs text-faint">{status.reason}</div>
+          )}
+        </div>
+
+        <Button
+          variant="primary"
+          onClick={run}
+          disabled={running || !agentId || (status ? status.available === false : false)}
+        >
+          <IconBolt /> {running ? "Running…" : "Run improvement now"}
+        </Button>
       </div>
     </Card>
   );

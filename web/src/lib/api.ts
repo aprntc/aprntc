@@ -35,6 +35,33 @@ export type AutoDecision = {
   } | null;
 };
 
+export type ImproveStatus = {
+  available: boolean;
+  reason?: string;
+  agent_id?: string;
+  n_trajectories?: number;
+  n_new_since_last_run?: number;
+  min_new_to_trigger?: number;
+  last_run_at?: string | null;
+  last_candidate_hash?: string | null;
+  registered?: boolean;
+};
+
+export type ImproveReport = {
+  agent_id: string;
+  ran: boolean;
+  reason: string;
+  n_trajectories: number;
+  n_new: number;
+  n_lessons: number;
+  candidate_generation: number | null;
+  candidate_hash: string | null;
+  gate_passed: boolean | null;
+  win_rate: number | null;
+  auto_promoted: boolean;
+  bundle_written: boolean;
+};
+
 export type AuditRecord = {
   ts: string;
   candidate_playbook_hash: string | null;
@@ -148,6 +175,10 @@ export const api = {
     get<{ records: AuditRecord[]; count: number }>(
       `/api/policy/auto-promote/audit?limit=${limit}`,
     ),
+  improveStatus: (agentId: string) =>
+    get<ImproveStatus>(`/api/agents/${encodeURIComponent(agentId)}/improve/status`),
+  improveNow: (agentId: string) =>
+    post<ImproveReport>(`/api/agents/${encodeURIComponent(agentId)}/improve`, {}),
   fleet: (domain?: string) => {
     const qs = domain ? `?domain=${encodeURIComponent(domain)}` : "";
     return get<{ agents: FleetAgent[] }>(`/api/fleet${qs}`);

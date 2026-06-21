@@ -125,32 +125,52 @@ reward shown in the trajectory row.
 
 ---
 
-## Phase 4 — Distill lessons from the accumulated trajectories
+## Phase 4 — The autonomous improvement loop runs itself
 
-After ~10-30 real conversations (more is better; outcome anchors need data
-to fuse on), kick off distillation. In this demo we drive it from a
-script; in production a scheduler runs this nightly (see `scripts/run_scheduler.py`).
+This is the part that makes aprntc a product, not a toolbox: **you don't run
+any distillation script.** The `ImprovementOrchestrator` does the whole
+distill → memory → candidate → gate → review-bundle pipeline automatically,
+per agent.
 
-```bash
-# Sample distillation — produces a Playbook for the ecommerce-support agent
-# from the trajectories the store has accumulated.
-.venv/bin/python scripts/demo_loop.py        # quick demo (synthetic — not the ecommerce data)
+**Triggering:**
+- **Scheduled (production default):** run the loop as a background process. It
+  runs every agent on a cadence, doing real work only when enough NEW
+  trajectories have accumulated since that agent's last run.
+  ```bash
+  # every 2 minutes for the demo (every 24h by default):
+  APRNTC_IMPROVE_INTERVAL_S=120 .venv/bin/python scripts/run_scheduler.py
+  ```
+- **On demand (operator button):** in the dashboard → **Promotion review** →
+  the **"Run improvement now"** panel at the top. Pick the agent, click the
+  button. (Behind the scenes: `POST /api/agents/{agent_id}/improve`.)
 
-# For the actual ecommerce-support distillation (when you have real ShopMate runs):
-# See scripts/run_scheduler.py and adapt the agent_id. The scheduler reads from
-# the same TrajectoryStore the dashboard reads.
-```
+When it runs, the orchestrator automatically:
+1. Reads the agent's trajectories (filtered by `agent_id`).
+2. Distills lessons — **exemplars** from high-reward turns, **directives** from
+   clustered successes, **failure-patterns** from your 👎 turns — and writes
+   them to Experience Memory (they appear on the **Lessons** screen).
+3. Builds a candidate **G1 playbook** = G0 + the attributable diff.
+4. Runs a **replay gate**: re-answers a sample of recorded tasks with the
+   candidate prompt (feeding back the recorded tool results so a tool-using
+   agent isn't penalised), and the recused judge scores candidate vs the real
+   recorded answers. Labelled `eval_mode: "replay"`.
+5. Writes the **review bundle** (appears on the **Promotion review** screen).
+6. If A4 auto-promotion is enabled AND guardrails clear → promotes with no
+   human. Otherwise → leaves the candidate for your review (the default).
 
-The distiller mines:
-- **Concrete exemplars** from high-reward turns (the answers ShopMate got
-  right that you liked).
-- **Directives** from clusters of similar failures ("when a refund is
-  rejected, always state the reason from the result.message field").
-- **Failure-patterns** from low-reward turns (the explicit
-  user_explicit:0.0 thumbs you flagged).
+**Live-verified** (2026-06-21): 6 ShopMate trajectories → one `improve` call →
+10 lessons mined, candidate G1 built, replay gate 67% win-rate, review bundle
+written. One of the mined watch-outs was exactly the refund mistake the 👎
+flagged: *"After using get_order for a refund request, do not [ask for the
+reason without acting]…"*.
 
-The result is a new candidate **G1 playbook** — same base system prompt
-+ directives + exemplars + watch-outs.
+> **A note on the gate for external agents.** aprntc can't re-run ShopMate's
+> code (it doesn't have ShopMate's tools), so the gate is a prompt-**replay**
+> eval, not a live tool-faithful A/B. It faithfully measures the only thing a
+> playbook changes — the final answer given the same information. The fully
+> faithful path is **online shadow mode** (ShopMate runs both prompts live and
+> posts both), which is the A2 production wiring you opt into for high-stakes
+> promotions.
 
 ---
 
@@ -189,14 +209,16 @@ directives, watch-outs, etc.).
 
 **This is the loop closed:**
 ```
-ShopMate G0 → real customer interactions → trajectories + 👍/👎
-            → distillation mines lessons
-            → candidate G1 playbook
-            → review + promote (human or A4-auto)
-            → ShopMate fetches G1 → next conversation uses it
+ShopMate G0 → real customer interactions → trajectories + 👍/👎   [automatic]
+            → orchestrator distills lessons (scheduled/on-demand) [automatic]
+            → candidate G1 playbook + replay gate + review bundle [automatic]
+            → review + promote                            [human — by design]
+            → ShopMate fetches G1 → next conversation uses it      [automatic]
 ```
 
-No redeploy. The agent's behaviour just… improved.
+The customer's only ongoing action is the **Promote** click (and even that
+is optional once A4 auto-promotion is enabled and trust is established). No
+redeploy. The agent's behaviour just… improved.
 
 ---
 

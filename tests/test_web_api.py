@@ -275,6 +275,40 @@ def test_fleet_register_requires_agent_id(tmp_path):
     assert c.post("/api/fleet/register", json={}).status_code == 400
 
 
+def test_playbook_register_auto_onboards_into_fleet(tmp_path):
+    """Auto-onboarding: registering a G0 playbook ALSO creates the fleet entry —
+    the customer's single action sets up fleet membership automatically."""
+    from aprntc.serving import PlaybookRegistry
+    state = AppState(
+        playbooks=PlaybookRegistry(str(tmp_path / "pb.json")),
+        fleet_root=str(tmp_path / "fleet"),
+    )
+    c = TestClient(create_app(state))
+    # Register a playbook (what an external agent does on first run).
+    r = c.post("/api/playbooks/shopmate/register",
+               json={"system_prompt": "You are ShopMate.", "domain": "support", "name": "ShopMate"})
+    assert r.status_code == 200
+    # The agent now appears in the fleet WITHOUT a separate fleet/register call.
+    agents = c.get("/api/fleet").json()["agents"]
+    assert any(a["agent_id"] == "shopmate" and a["domain"] == "support" for a in agents)
+
+
+def test_improve_status_unavailable_without_engine(tmp_path):
+    """/improve/status reports available:false when ModelArk keys aren't configured."""
+    from aprntc.serving import PlaybookRegistry
+    state = AppState(playbooks=PlaybookRegistry(str(tmp_path / "pb.json")))
+    c = TestClient(create_app(state))
+    r = c.get("/api/agents/x/improve/status").json()
+    assert r["available"] is False
+
+
+def test_improve_now_503_without_engine(tmp_path):
+    from aprntc.serving import PlaybookRegistry
+    state = AppState(playbooks=PlaybookRegistry(str(tmp_path / "pb.json")))
+    c = TestClient(create_app(state))
+    assert c.post("/api/agents/x/improve").status_code == 503
+
+
 def test_fleet_filter_by_domain(tmp_path):
     state = AppState(fleet_root=str(tmp_path / "fleet"))
     c = TestClient(create_app(state))

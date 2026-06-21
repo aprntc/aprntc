@@ -44,6 +44,10 @@ class AppState:
     auto_audit_path: str = "auto_promote_audit.jsonl"
     # A6: fleet — many parent agents under one apprentice (each its own lineage).
     fleet_root: str = "fleet"
+    # Autonomous improvement loop: per-agent orchestrator state + a shared engine
+    # (provider + judge + distiller + model) built from env when ARK keys exist.
+    orchestrator_state_path: str = "orchestrator_state.json"
+    orchestrator_engine: Any | None = None    # dict(provider, judge, distiller, model) or None
     # A2: online shadow runner + canary controller. Wired at deploy-time against
     # real traffic — None in dev mode. The dashboard surfaces these read-only.
     shadow: Any | None = None      # ShadowRunner
@@ -133,6 +137,7 @@ class AppState:
         agent_run = agent_run_factory(store) if agent_run_factory is not None else None
         from aprntc.serving import PlaybookRegistry
         auth_provider, session_signer, users = _build_auth(load_dotenv=load_dotenv)
+        orchestrator_engine = _build_orchestrator_engine(load_dotenv=load_dotenv)
         return cls(
             lineage_path=lineage_path,
             bundle_path=bundle_path,
@@ -141,6 +146,7 @@ class AppState:
             agent_run=agent_run,
             agent_run_factory=agent_run_factory,
             playbooks=PlaybookRegistry("playbooks.json"),
+            orchestrator_engine=orchestrator_engine,
             auth_provider=auth_provider,
             session_signer=session_signer,
             users=users,
@@ -267,6 +273,34 @@ def _build_agent_run_factory(*, load_dotenv: bool = True) -> Any | None:
         return _make_agent_run(store, client, model, _byteplus_kb)
 
     return factory
+
+
+def _build_orchestrator_engine(*, load_dotenv: bool = True) -> Any | None:
+    """Build the shared engine (provider + recused judge + distiller + model) the
+    ImprovementOrchestrator needs, from env. Returns None when ARK keys are absent
+    (the improvement loop then reports "engine not configured" instead of 500ing).
+    """
+    try:
+        from aprntc.byteplus.modelark import ModelArkClient
+        from aprntc.config import Settings
+        from aprntc.distill.distiller import Distiller
+        from aprntc.eval.judge import PairwiseJudge
+
+        settings = Settings.from_env(dotenv=".env" if load_dotenv else None)
+        settings.modelark.validate()
+        client = ModelArkClient(settings.modelark)
+        policy_model = settings.modelark.policy_model
+        judge_model = settings.modelark.judge_model
+        judge = PairwiseJudge(client, judge_model=judge_model, policy_model=policy_model)
+        distiller = Distiller(client, model=policy_model)
+        return {
+            "provider": client,
+            "judge": judge,
+            "distiller": distiller,
+            "model": policy_model,
+        }
+    except Exception:
+        return None
 
 
 def _build_agent_run(store: TrajectoryStore, *, load_dotenv: bool = True) -> Any | None:
@@ -505,6 +539,53 @@ def create_app(state: AppState | None = None) -> FastAPI:
             return None
         all_labels = [store.labels_for(e.episode_id) for e in store.query()]
         return compute_trust(all_labels)
+
+    def _build_orchestrator(request: "Request"):
+        """Construct an ImprovementOrchestrator for this request (tenant-scoped).
+
+        Returns None when the engine (ARK keys) isn't configured. Wires the
+        request-resolved store / memory / playbook registry + the shared engine
+        + the auto-policy + the A3 trust signal.
+        """
+        engine = state.orchestrator_engine
+        if engine is None:
+            return None
+        from aprntc.serving.orchestrator import ImprovementOrchestrator
+        ctx = _resolve_ctx(request)
+        store = _resolve_store(request)
+        registry, _ = _registry(request)
+        bundle_path = ctx.bundle_path if ctx is not None else state.bundle_path
+        state_path = (ctx.auto_policy_path.replace("auto_policy.json", "orchestrator_state.json")
+                      if ctx is not None else state.orchestrator_state_path)
+        policy = _load_auto_policy(_resolve_auto_policy_path(request))
+        trust_report = _compute_store_trust(request)
+        # Per-tenant memory store for upserting lessons (not just the search closure).
+        memory = _resolve_memory_store(ctx)
+        return ImprovementOrchestrator(
+            store=store,
+            memory=memory,
+            playbooks=registry,
+            provider=engine["provider"],
+            distiller=engine["distiller"],
+            judge=engine["judge"],
+            model=engine["model"],
+            bundle_path=bundle_path,
+            state_path=state_path,
+            fleet=_resolve_fleet(request),
+            auto_policy=policy,
+            trust=trust_report.value if trust_report else None,
+        )
+
+    def _resolve_memory_store(ctx):
+        """Build a writable MemoryStore for the orchestrator (or None)."""
+        try:
+            from aprntc.memory import make_memory_store
+            url = os.environ.get("APRNTC_VECTOR_DB_URL") or "local:///./aprntc_memory.db"
+            if ctx is not None:
+                url = _tenant_scoped_url(url, ctx.tenant_id)
+            return make_memory_store(url)
+        except Exception:
+            return None
 
     # -- health ----------------------------------------------------------
     @app.get("/api/health")
@@ -843,6 +924,34 @@ def create_app(state: AppState | None = None) -> FastAPI:
         ))
         return ref.to_dict()
 
+    # -- Autonomous improvement loop -----------------------------------------
+    @app.get("/api/agents/{agent_id}/improve/status")
+    def improve_status(agent_id: str, request: Request) -> dict[str, Any]:
+        """Where the agent is in its improvement cycle (for the dashboard)."""
+        orch = _build_orchestrator(request)
+        if orch is None:
+            return {"available": False, "reason": "improvement engine not configured (needs ModelArk keys)"}
+        return {"available": True, **orch.status_for(agent_id)}
+
+    @app.post("/api/agents/{agent_id}/improve")
+    def improve_now(agent_id: str, request: Request, force: bool = True) -> dict[str, Any]:
+        """Run the autonomous improvement loop for one agent NOW (operator-triggered).
+
+        ``force`` (default true for the manual button) bypasses the
+        min-new-trajectories trigger. The scheduled background run uses force=false.
+        Distills → writes lessons → builds a candidate → replay-gates → writes the
+        review bundle (and auto-promotes if A4 is enabled and guardrails clear).
+        """
+        orch = _build_orchestrator(request)
+        if orch is None:
+            raise HTTPException(status_code=503,
+                                detail="improvement engine not configured (needs ModelArk keys)")
+        try:
+            report = orch.run_for_agent(agent_id, force=force)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"improvement run failed: {e}")
+        return report.to_dict()
+
     # -- A2: online shadow + canary read endpoints ---------------------------
     @app.get("/api/online/shadow")
     def get_shadow(request: Request) -> dict[str, Any]:
@@ -936,7 +1045,14 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     @app.post("/api/playbooks/{agent_id}/register")
     def register_playbook(agent_id: str, body: dict[str, Any], request: Request) -> dict[str, Any]:
-        """Register an external agent's initial G0 (its current system prompt)."""
+        """Register an external agent's initial G0 (its current system prompt).
+
+        AUTO-ONBOARDING: this single call also (a) creates the agent's Fleet entry
+        and (b) initializes its improvement schedule, so the customer's ONLY action
+        is to point their agent at aprntc — fleet membership + the autonomous
+        improvement loop set themselves up. Both side-effects are best-effort:
+        a failure there never blocks the (critical) playbook registration.
+        """
         from aprntc.distill.playbook import Playbook
 
         registry, _ = _registry(request)
@@ -949,7 +1065,23 @@ def create_app(state: AppState | None = None) -> FastAPI:
             exemplars=list(body.get("exemplars", [])),
             watch_out=list(body.get("watch_out", [])),
         )
-        return registry.register(agent_id, pb).to_dict()
+        active = registry.register(agent_id, pb)
+
+        # Auto-onboard into the Fleet (Fleet.register is idempotent by agent_id).
+        try:
+            fleet = _resolve_fleet(request)
+            existing = {a.agent_id for a in fleet.agents()}
+            if agent_id not in existing:
+                fleet.register(AgentRef(
+                    agent_id=agent_id,
+                    domain=(body.get("domain") or "generic").strip() or "generic",
+                    name=(body.get("name") or agent_id).strip(),
+                    tags=list(body.get("tags") or []),
+                ))
+        except Exception:
+            pass  # fleet membership is convenience, not correctness
+
+        return active.to_dict()
 
     @app.post("/api/playbooks/{agent_id}/rollback")
     def rollback_playbook(agent_id: str, request: Request) -> dict[str, Any]:

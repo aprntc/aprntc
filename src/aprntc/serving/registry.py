@@ -101,6 +101,10 @@ class PlaybookRegistry:
     def has(self, agent_id: str) -> bool:
         return agent_id in self._data
 
+    def agent_ids(self) -> list[str]:
+        """All registered agent ids (for the autonomous improvement loop)."""
+        return list(self._data.keys())
+
     # -- promotion / rollback (flip the active pointer) -----------------
     def promote(self, agent_id: str, playbook: Playbook) -> ActivePlaybook:
         """Add a new generation (active+1) and make it active."""
