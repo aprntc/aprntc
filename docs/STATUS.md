@@ -264,6 +264,22 @@ The reference external-agent integration loop is proven on live infra:
   live LiteLLM library (catches contract drift on upgrades). 318 tests total.
 - OTel + MCP + A2A live-verify still gated on their external services (separate work).
 
+### A1 — OTel ingester LIVE-VERIFIED end-to-end (2026-06-21)
+The OTel-instrumented external agent path is also proven:
+- `scripts/demo_otel_agent.py` — a self-contained customer program instruments a real
+  OpenAI-compatible model call with the OpenTelemetry SDK (OpenLLMetry-style
+  `gen_ai.*` attributes), exports finished spans via `InMemorySpanExporter`, feeds
+  them to `spans_to_episodes`, and writes the Episodes into TrajectoryStore — same
+  data path a real OTel Collector would take in production, condensed into one
+  process for the demo.
+- **Verified:** 4.8 s real ModelArk call (51 → 290 tokens) → Episode
+  `ep_f693255992a7…` captured with `collector=otel` + model_id + task_input +
+  final_output + tokens. Surfaces under the A1 filter chip alongside
+  `egress_proxy` + `sdk_wrapper`.
+- Plus an integration test (`test_otel_ingests_real_sdk_span_via_inmemory_exporter`)
+  that exercises `span_to_episode` against the live SDK's `ReadableSpan` — catches
+  GenAI-attribute schema drift on SDK upgrades. 347 tests total.
+
 ## A2 — Online shadow / A-B canary ✅ DONE (2026-06-14)
 `src/aprntc/online/`: `ShadowRunner` (shadow child vs parent on live requests, fail-open + sampled +
 position-debiased, live win-rate/CI, `ready_to_promote()`); `CanaryController` (staged rollout

@@ -189,6 +189,44 @@ def test_otel_prefix_match_for_indexed_attrs():
     assert ep.task_input == "q" and ep.final_output == "a"
 
 
+def test_otel_ingests_real_sdk_span_via_inmemory_exporter():
+    """Integration test against the live OpenTelemetry SDK — proves the GenAI
+    attribute mapping holds against the real SDK's ReadableSpan shape, not just
+    our hand-written dicts. Skipped when [otel] isn't installed."""
+    pytest.importorskip("opentelemetry.sdk.trace")
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("aprntc-test")
+
+    # Emit a span shaped like a real GenAI LLM call (OpenLLMetry convention).
+    with tracer.start_as_current_span("openai.chat") as span:
+        span.set_attribute("gen_ai.request.model", "gpt-4")
+        span.set_attribute("gen_ai.prompt", "What is OpenTelemetry?")
+        span.set_attribute("gen_ai.completion", "An observability framework.")
+        span.set_attribute("gen_ai.usage.input_tokens", 12)
+        span.set_attribute("gen_ai.usage.output_tokens", 8)
+
+    [readable] = exporter.get_finished_spans()
+    # Adapt the real ReadableSpan to the dict shape span_to_episode expects.
+    span_dict = {
+        "name": readable.name,
+        "attributes": dict(readable.attributes or {}),
+        "trace_id": f"{readable.context.trace_id:032x}",
+    }
+    ep = span_to_episode(span_dict)
+    assert ep is not None
+    assert ep.collector is Collector.OTEL
+    assert ep.task_input == "What is OpenTelemetry?"
+    assert ep.final_output == "An observability framework."
+    assert ep.model_id == "gpt-4"
+    assert ep.tokens_in == 12 and ep.tokens_out == 8
+
+
 def test_otel_skips_non_llm_spans():
     assert span_to_episode({"name": "http.request", "attributes": {"http.method": "GET"}}) is None
 
