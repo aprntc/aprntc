@@ -26,12 +26,15 @@ otel = [
 # The collector itself is pure-stdlib (dict-in/Episode-out); the SDK is only needed
 # to run a live A2A server/proxy in front of the agents.
 a2a = ["a2a-sdk>=0.2"]
+# Postgres-backed TrajectoryStore — for multi-worker uvicorn deployments where
+# SQLite's single-writer lock becomes a bottleneck.
+postgres = ["psycopg[binary]>=3.1"]
 # UI for the promotion gate (review diff / metrics / promote / rollback).
 ui = ["streamlit>=1.40"]
 # Web dashboard backend (REST API over gate/lineage/trajectories/memory).
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 # Everything (excludes dev/test tooling).
-all = ["aprntc[byteplus,proxy,otel,a2a,ui,web]"]
+all = ["aprntc[byteplus,proxy,otel,a2a,postgres,ui,web]"]
 # Dev/test only. `volcengine` is the byte-for-byte ORACLE for our hand-rolled
 # Signature-V4 signer — it is NOT a runtime dependency (we sign over REST).
 dev = [

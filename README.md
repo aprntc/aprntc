@@ -106,10 +106,15 @@ tests/             288 tests (unit + signing oracle)
 ```
 
 ## Documentation
+- `docs/ONBOARDING.md` — **5-min customer onboarding**: pick a collector (LiteLLM / OTel / MCP / SDK) + wire it in (5 lines)
 - `docs/DESIGN_AND_SOLUTION.md` — the full design & solution write-up (the source of truth for *what* + *why*)
 - `docs/PRODUCTION.md` — how aprntc connects to a real external agent in production
+- `docs/DEPLOY.md` — single-container deploy, Postgres + multi-worker setup
 - `docs/ROADMAP.md` / `docs/STATUS.md` — what's planned / what's done
 - `docs/decisions/` — 8 ADRs (the load-bearing decisions + rejected alternatives)
+- `docs/design/` — the design & solution document in HTML and Word (with diagrams)
+- `docs/research/` — **the technical report** (`aprntc-paper.pdf` / `.html` / `.md`): aprntc framed as
+  outcome-anchored apprenticeship distillation, in the style of an LLM model paper
 
 ## License
 MIT.

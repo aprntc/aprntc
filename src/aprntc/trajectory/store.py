@@ -343,3 +343,25 @@ class TrajectoryStore:
         return self._conn.execute(
             "SELECT 1 FROM episodes WHERE episode_id = ?", (episode_id,)
         ).fetchone() is not None
+
+
+def make_trajectory_store(url_or_path: str | os.PathLike[str] = "aprntc.db"):
+    """Open a store appropriate for ``url_or_path``.
+
+    * ``postgresql://…`` or ``postgres://…`` → :class:`PostgresTrajectoryStore`
+      (needs the ``[postgres]`` extra). Use this for multi-worker uvicorn — the
+      Postgres backend handles concurrent writers cleanly.
+    * Anything else (including ``sqlite:///path`` and bare file paths) →
+      :class:`TrajectoryStore` (SQLite). Dependency-light default.
+
+    The two implementations share the same public interface; downstream code
+    treats the returned object generically.
+    """
+    s = str(url_or_path)
+    if s.startswith("postgresql://") or s.startswith("postgres://"):
+        from aprntc.trajectory.pg_store import PostgresTrajectoryStore
+        # psycopg accepts both prefixes natively.
+        return PostgresTrajectoryStore(s)
+    if s.startswith("sqlite:///"):
+        s = s[len("sqlite:///"):]
+    return TrajectoryStore(s)

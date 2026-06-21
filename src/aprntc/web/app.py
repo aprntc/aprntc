@@ -15,6 +15,7 @@ Design notes:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ from aprntc.promote.audit import append_audit, read_audit
 from aprntc.promote.auto import AutoPromotionPolicy
 from aprntc.promote.lineage import LineageRegistry
 from aprntc.promote.stats import GateReport
-from aprntc.trajectory.store import TrajectoryStore
+from aprntc.trajectory.store import TrajectoryStore, make_trajectory_store
 
 
 @dataclass
@@ -109,18 +110,24 @@ class AppState:
     def from_env(
         cls,
         *,
-        db_path: str = "aprntc.db",
+        db_path: str | None = None,
         lineage_path: str = "lineage.json",
         bundle_path: str = "review_bundle.json",
         load_dotenv: bool = True,
     ) -> "AppState":
-        """Wire real persistent backends (SQLite store + VikingDB memory) from config.
+        """Wire real persistent backends (trajectory store + VikingDB memory) from config.
 
-        Degrades gracefully: a missing DB file still gives an (empty) store; if VikingDB
-        config/creds are absent or httpx isn't installed, ``memory_search`` stays ``None``
-        and the lessons screen shows its "not connected" state.
+        Store backend selection:
+          - explicit ``db_path`` arg wins (mostly for tests),
+          - else ``APRNTC_DB_URL`` env (``postgresql://…`` triggers the Postgres backend
+            for multi-worker uvicorn deployments),
+          - else default to SQLite at ``aprntc.db``.
+        Degrades gracefully: a missing SQLite file still gives an (empty) store; if
+        VikingDB config/creds are absent or httpx isn't installed, ``memory_search``
+        stays ``None`` and the lessons screen shows its "not connected" state.
         """
-        store = TrajectoryStore(db_path)
+        store_url = db_path or os.environ.get("APRNTC_DB_URL") or "aprntc.db"
+        store = make_trajectory_store(store_url)
         memory_search = _build_memory_search(load_dotenv=load_dotenv)
         agent_run_factory = _build_agent_run_factory(load_dotenv=load_dotenv)
         agent_run = agent_run_factory(store) if agent_run_factory is not None else None
