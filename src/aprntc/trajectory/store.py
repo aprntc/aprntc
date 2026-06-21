@@ -251,6 +251,13 @@ class TrajectoryStore:
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) AS n FROM episodes").fetchone()["n"]
 
+    def counts_by_collector(self) -> dict[str, int]:
+        """Episode counts grouped by collector — for UI filter chips."""
+        rows = self._conn.execute(
+            "SELECT collector, COUNT(*) AS n FROM episodes GROUP BY collector"
+        ).fetchall()
+        return {r["collector"]: r["n"] for r in rows}
+
     # -- fused reward (ADR 0006: outcome-anchored, confidence-weighted) --
 
     def fused_reward(

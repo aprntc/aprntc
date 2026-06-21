@@ -133,9 +133,32 @@ def test_get_missing_trajectory_404(tmp_path, store):
     assert r.status_code == 404
 
 
+def test_trajectories_collector_filter_and_counts(tmp_path, store):
+    """A1: /api/trajectories accepts ?collector= AND returns counts per collector."""
+    sdk_ep = Episode(task_input="t1", collector=Collector.SDK_WRAPPER,
+                     final_output="a", turns=[Turn(turn_index=0)])
+    proxy_ep = Episode(task_input="t2", collector=Collector.EGRESS_PROXY,
+                       final_output="b", turns=[Turn(turn_index=0)])
+    store.put_episode(sdk_ep, scrub=False)
+    store.put_episode(proxy_ep, scrub=False)
+    c = _client(tmp_path, store=store)
+
+    # by_collector groups episodes by collector for the UI filter chips.
+    all_lst = c.get("/api/trajectories").json()
+    assert all_lst["count"] == 2
+    assert all_lst["by_collector"] == {"sdk_wrapper": 1, "egress_proxy": 1}
+    assert len(all_lst["episodes"]) == 2
+
+    # ?collector= narrows the list to just that collector, totals unchanged.
+    only_proxy = c.get("/api/trajectories?collector=egress_proxy").json()
+    assert only_proxy["count"] == 2  # global total
+    assert len(only_proxy["episodes"]) == 1
+    assert only_proxy["episodes"][0]["collector"] == "egress_proxy"
+
+
 def test_trajectories_empty_without_store(tmp_path):
     r = _client(tmp_path).get("/api/trajectories")
-    assert r.json() == {"episodes": [], "count": 0}
+    assert r.json() == {"episodes": [], "count": 0, "by_collector": {}}
 
 
 # ─── lessons ────────────────────────────────────────────────────────────────

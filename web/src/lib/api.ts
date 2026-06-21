@@ -88,8 +88,15 @@ export const api = {
   promote: (playbook_hash: string, gate_summary = "") =>
     post<{ action: string; current: Generation }>("/api/lineage/promote", { playbook_hash, gate_summary }),
   rollback: () => post<{ action: string; current: Generation }>("/api/lineage/rollback"),
-  trajectories: (limit = 50) =>
-    get<{ count: number; episodes: EpisodeSummary[] }>(`/api/trajectories?limit=${limit}`),
+  trajectories: (limit = 50, collector?: string) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (collector) qs.set("collector", collector);
+    return get<{
+      count: number;
+      episodes: EpisodeSummary[];
+      by_collector?: Record<string, number>;
+    }>(`/api/trajectories?${qs.toString()}`);
+  },
   trajectory: (id: string) => get<Record<string, unknown>>(`/api/trajectories/${id}`),
   lessons: (q: string, k = 10) =>
     get<{ lessons: Lesson[]; available: boolean; error?: string }>(

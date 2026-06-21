@@ -432,15 +432,17 @@ def create_app(state: AppState | None = None) -> FastAPI:
     # -- trajectories ----------------------------------------------------
     @app.get("/api/trajectories")
     def list_trajectories(request: Request, limit: int = 50,
-                          generation: str | None = None) -> dict[str, Any]:
+                          generation: str | None = None,
+                          collector: str | None = None) -> dict[str, Any]:
         # In dev mode an unconfigured store yields an empty list (existing behavior);
         # in tenant mode `_resolve_store` enforces auth and returns the tenant store.
         if state.tenant_resolver is None and state.store is None:
-            return {"episodes": [], "count": 0}
+            return {"episodes": [], "count": 0, "by_collector": {}}
         store = _resolve_store(request)
-        eps = store.query(generation_id=generation, limit=limit)
+        eps = store.query(generation_id=generation, collector=collector, limit=limit)
         return {
             "count": store.count(),
+            "by_collector": store.counts_by_collector(),
             "episodes": [_episode_summary(e, store) for e in eps],
         }
 

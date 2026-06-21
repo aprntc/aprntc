@@ -7,6 +7,14 @@
       "runtimeArgs": ["run", "dev"],
       "cwd": "web",
       "port": 5173
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-c", "import os, uvicorn; uvicorn.run('aprntc.web.app:app', host='127.0.0.1', port=int(os.environ['PORT']))"],
+      "port": 8000,
+      "autoPort": true,
+      "env": { "APRNTC_STATIC_DIR": "web/dist" }
     }
   ]
 }
