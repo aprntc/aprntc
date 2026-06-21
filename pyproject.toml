@@ -29,12 +29,17 @@ a2a = ["a2a-sdk>=0.2"]
 # Postgres-backed TrajectoryStore — for multi-worker uvicorn deployments where
 # SQLite's single-writer lock becomes a bottleneck.
 postgres = ["psycopg[binary]>=3.1"]
+# Vector-DB backend extras (the default LocalMemoryStore needs no extras).
+# Each pulls in just its client; embedders are kept separate.
+chroma   = ["chromadb>=0.5"]
+pinecone = ["pinecone>=4.0"]
+aws      = ["opensearch-py>=2.0"]
 # UI for the promotion gate (review diff / metrics / promote / rollback).
 ui = ["streamlit>=1.40"]
 # Web dashboard backend (REST API over gate/lineage/trajectories/memory).
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 # Everything (excludes dev/test tooling).
-all = ["aprntc[byteplus,proxy,otel,a2a,postgres,ui,web]"]
+all = ["aprntc[byteplus,proxy,otel,a2a,postgres,chroma,pinecone,aws,ui,web]"]
 # Dev/test only. `volcengine` is the byte-for-byte ORACLE for our hand-rolled
 # Signature-V4 signer — it is NOT a runtime dependency (we sign over REST).
 dev = [

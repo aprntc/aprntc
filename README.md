@@ -87,7 +87,12 @@ SQLite remains the zero-deps default for single-worker. See `docs/DEPLOY.md`.
 All config via `.env` (see `.env.example`). Region `ap-southeast-1`.
 - **ModelArk:** `ARK_API_KEY`, `APRNTC_POLICY_MODEL` (Seed-2.0-pro), `APRNTC_JUDGE_MODEL`
   (DeepSeek-V4-pro — must differ from policy).
-- **VikingDB:** `VIKINGDB_AK`, `VIKINGDB_SK` (+ hosts/region defaulted).
+- **Vector DB (Experience Memory):** `APRNTC_VECTOR_DB_URL` (default
+  `local:///./aprntc_memory.db` — no creds needed). Switch to Chroma / BytePlus
+  VikingDB / Pinecone / AWS OpenSearch via the URL scheme — see
+  `docs/VECTOR_DB.md` for the full table.
+- **Trajectory store (optional):** `APRNTC_DB_URL=postgresql://…` to use the Postgres
+  backend for multi-worker uvicorn. Default = SQLite (`aprntc.db`).
 - **Auth (optional):** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`,
   `APRNTC_SESSION_SECRET` — when set, the dashboard requires Google sign-in.
 
@@ -100,7 +105,7 @@ src/aprntc/
   providers/       LLMProvider seam (model-agnostic)
   tap/             AgentTap + collectors (sdk_wrapper, egress_proxy, otel, mcp, a2a)
   eval/            recused judge, outcome scorers, health, learned fusion
-  memory/          MemoryStore + VikingDB REST adapter + MMR
+  memory/          MemoryStore + Local/Chroma/VikingDB/Pinecone/AWS-OpenSearch backends + URL factory + Embedder protocol
   distill/         playbook + diff, distiller, child runtime
   promote/         gate (Wilson CI) + lineage + auto-promotion policy + audit log
   online/          shadow runner + canary controller
@@ -130,6 +135,7 @@ APRNTC_TEST_PG_URL="postgresql://postgres:test@localhost:5432/postgres" \
 ## Documentation
 - `docs/ONBOARDING.md` — **5-min customer onboarding**: pick a collector (LiteLLM / OTel / MCP / SDK) + wire it in (5 lines)
 - `docs/EXAMPLE_DEPLOYMENT.md` — **end-to-end walkthrough** (ShopMate e-commerce agent + aprntc) — provision → register → run → distill → promote
+- `docs/VECTOR_DB.md` — vector-DB backend choices (Local default · Chroma · BytePlus · Pinecone · AWS OpenSearch)
 - `examples/ecommerce-agent/` — runnable Streamlit demo of an external customer agent talking to aprntc over HTTP
 - `docs/DESIGN_AND_SOLUTION.md` — the full design & solution write-up (the source of truth for *what* + *why*)
 - `docs/PRODUCTION.md` — how aprntc connects to a real external agent in production

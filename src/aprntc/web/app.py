@@ -147,31 +147,76 @@ class AppState:
         )
 
 
-def _build_memory_search(*, load_dotenv: bool = True, tenant_id: str | None = None) -> Any | None:
-    """Return a ``(query, k) -> list[dict]`` retriever backed by VikingDB, or None.
+def _tenant_scoped_url(url: str, tenant_id: str) -> str:
+    """Derive a per-tenant memory URL from a base one — namespace the resource.
 
-    When ``tenant_id`` is set, use a tenant-specific collection name so each
-    tenant's lessons are isolated. The collection must exist (provisioned out
-    of band); if missing, retrieval returns the "no results" path and the
-    lessons endpoint reports the error rather than 500-ing.
+    * local://path/to.db          → local://path/to.{tenant}.db
+    * chroma:///path/to/dir        → chroma:///path/to/dir/{tenant}
+    * byteplus://collection[/idx]  → byteplus://{tenant}_collection[/{tenant}_idx]
+    * pinecone://index            → pinecone://{tenant}-index (Pinecone limits charset)
+    * aws://host/index            → aws://host/{tenant}-index
+    """
+    from urllib.parse import urlparse
+
+    p = urlparse(url)
+    scheme = p.scheme.lower()
+    if scheme in ("local", "sqlite", "file", ""):
+        path = (p.path or p.netloc or "aprntc_memory.db").lstrip("/")
+        if path.endswith(".db"):
+            stem, ext = path[:-3], ".db"
+        else:
+            stem, ext = path, ""
+        return f"{scheme or 'local'}:///{stem}.{tenant_id}{ext}"
+    if scheme == "chroma":
+        base = (p.path or p.netloc or "/aprntc_chroma").rstrip("/")
+        return f"chroma://{base}/{tenant_id}"
+    if scheme == "byteplus":
+        coll = (p.netloc or "ankur_aprntc_collection").strip("/")
+        idx = (p.path or "/ankur_aprntc_index").strip("/")
+        return f"byteplus://{tenant_id}_{coll}/{tenant_id}_{idx}"
+    if scheme == "pinecone":
+        idx = (p.netloc or "aprntc-lessons").strip("/")
+        return f"pinecone://{tenant_id}-{idx}"
+    if scheme in ("aws", "opensearch"):
+        host = p.netloc
+        idx = (p.path or "/aprntc-lessons").lstrip("/")
+        return f"{scheme}://{host}/{tenant_id}-{idx}"
+    return url  # unknown scheme — leave as-is
+
+
+def _build_memory_search(*, load_dotenv: bool = True, tenant_id: str | None = None) -> Any | None:
+    """Return a ``(query, k) -> list[dict]`` retriever, backed by whichever
+    vector DB ``APRNTC_VECTOR_DB_URL`` points at (default: LocalMemoryStore).
+
+    Pluggable backends (see :func:`aprntc.memory.make_memory_store`):
+      * ``local:///path/to/file.db`` — default, SQLite + cosine, no deps
+      * ``chroma:///path/to/dir``    — ChromaDB ([chroma] extra)
+      * ``byteplus://collection``    — VikingDB ([byteplus] extra + AK/SK)
+      * ``pinecone://index-name``    — Pinecone ([pinecone] extra + API key)
+      * ``aws://host:port/index``    — OpenSearch k-NN ([aws] extra)
+
+    When ``tenant_id`` is set, a per-tenant URL is derived so each tenant's
+    lessons are isolated even on shared cloud backends (collection name /
+    index name is namespaced by tenant). Returns ``None`` when the chosen
+    backend can't be constructed (missing creds, missing extra, etc.) — the
+    lessons screen surfaces the "memory not connected" state instead of 500ing.
     """
     try:
-        from aprntc.config import Settings
-        from aprntc.memory.vikingdb import VikingDBMemoryStore
-
-        settings = Settings.from_env(dotenv=".env" if load_dotenv else None)
-        settings.vikingdb.validate()  # raises if creds missing
+        from aprntc.memory import make_memory_store
+        # Lazy-load .env so demos/scripts can call into AppState.from_env without
+        # explicitly loading the env (mirrors the rest of from_env's behaviour).
+        if load_dotenv:
+            try:
+                from aprntc.config import load_dotenv as _ld
+                _ld(".env")  # populates os.environ from the file if present
+            except Exception:
+                pass
+        url = os.environ.get("APRNTC_VECTOR_DB_URL") or "local:///./aprntc_memory.db"
         if tenant_id:
-            collection = f"{tenant_id}_aprntc_collection"
-            index = f"{tenant_id}_aprntc_index"
-        else:
-            collection, index = "ankur_aprntc_collection", "ankur_aprntc_index"
-        mem = VikingDBMemoryStore(
-            settings.vikingdb,
-            collection=collection,
-            index=index,
-            dim=2048,
-        )
+            url = _tenant_scoped_url(url, tenant_id)
+        mem = make_memory_store(url)
+        if mem is None:
+            return None
     except Exception:
         return None
 

@@ -548,19 +548,22 @@ def test_run_agent_503_without_runtime(tmp_path):
 
 def test_from_env_wires_persistent_store(tmp_path, monkeypatch):
     from aprntc.web.app import AppState
-    # no VikingDB creds in env, and skip .env loading → memory_search stays None,
-    # but a real persistent store is still created.
-    for var in ("VIKINGDB_AK", "VIKINGDB_SK"):
+    # No cloud creds at all → the default LocalMemoryStore still works (SQLite + hash
+    # embedder, no API key required). This is the whole point of switching the default.
+    for var in ("VIKINGDB_AK", "VIKINGDB_SK", "ARK_API_KEY", "OPENAI_API_KEY",
+                "PINECONE_API_KEY", "APRNTC_VECTOR_DB_URL"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("APRNTC_VECTOR_DB_URL", f"local:///{tmp_path}/mem.db")
     state = AppState.from_env(
         db_path=str(tmp_path / "aprntc.db"),
         lineage_path=str(tmp_path / "lineage.json"),
         bundle_path=str(tmp_path / "bundle.json"),
         load_dotenv=False,
     )
-    assert state.store is not None              # real persistent store wired
-    assert state.memory_search is None          # degraded cleanly (no creds)
-    # the wired app answers over the store
+    assert state.store is not None              # real persistent trajectory store
+    assert state.memory_search is not None       # default Local backend works offline
+    # The wired app answers over both stores
     c = TestClient(create_app(state))
     assert c.get("/api/trajectories").json()["count"] == 0
-    assert c.get("/api/lessons", params={"q": "x"}).json()["available"] is False
+    body = c.get("/api/lessons", params={"q": "x"}).json()
+    assert body["available"] is True and body["lessons"] == []  # empty memory, but available
